@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pillow
+anthropic
+python-multipart
+numpy
+pypdfium2
+pymongo

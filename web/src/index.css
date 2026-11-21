@@ -1,0 +1,57 @@
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600&display=swap');
+@import 'tailwindcss';
+
+/* Design tokens — light mode, teal (theo mockup). Dùng qua class Tailwind: bg-primary, text-ink, border-line... */
+@theme {
+  --font-sans: 'Source Sans 3', system-ui, sans-serif;
+  --font-display: 'Lexend', system-ui, sans-serif;
+
+  --color-primary: #14919b;        /* nút chính, active nav, chart */
+  --color-primary-hover: #0b636b;
+  --color-primary-soft: #e6f5f6;   /* nền nhạt cho active item, badge */
+  --color-navy: #0f2a4a;           /* logo, tiêu đề đậm */
+  --color-ink: #1f2937;            /* chữ chính, contrast 4.5:1 trên nền trắng */
+  --color-muted: #6b7280;          /* chữ phụ */
+  --color-line: #e5e7eb;           /* viền */
+  --color-canvas: #f4f6f8;         /* nền trang */
+  --color-hover: #e3e9ef;          /* nền khi rê chuột: menu, nút viền, dòng danh sách */
+  --color-card: #ffffff;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #dc2626;
+  --color-ai: #3b82f6;             /* bong bóng người dùng / icon AI */
+  --color-ai-soft: #e8f1fe;
+
+  --radius-card: 12px;
+  --shadow-card: 0 1px 2px rgb(15 42 74 / 0.06), 0 4px 12px rgb(15 42 74 / 0.06);
+}
+
+@layer base {
+  html { font-family: var(--font-sans); color: var(--color-ink); background: var(--color-canvas); }
+  h1, h2, h3, .font-display { font-family: var(--font-display); }
+  :focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; } }
+}
+
+@utility card {
+  background: var(--color-card);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+
+/* Chuyển trang: fade + trượt nhẹ lên, 180ms — phối với prefers-reduced-motion ở @layer base */
+@layer utilities {
+  .page-enter { animation: page-enter 180ms ease-out; }
+  @keyframes page-enter {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+/* Card nhấn được: dịch nhẹ lên + bóng đậm hơn khi rê chuột (giống hiệu ứng video) */
+@layer utilities {
+  .card-hover { transition: transform 160ms ease, box-shadow 160ms ease; }
+  .card-hover:hover { transform: translateY(-4px); box-shadow: 0 10px 24px rgb(15 42 74 / 0.12); }
+}

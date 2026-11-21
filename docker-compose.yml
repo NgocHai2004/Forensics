@@ -1,0 +1,90 @@
+# Mobile Forensic: 3 container, Docker tự khởi động lại (cả khi reboot máy). Quản lý bằng docker compose, xem README.
+#   fe  nginx: giao diện React + chuyển /api,/file,/thumb sang be     -> cổng 8000 (mở ra LAN)
+#   be  FastAPI: index, tìm kiếm, hỏi đáp; files/chunks (FTS5 + embedding) ở SQLite ./data/index.db
+#   mongo  hồ sơ: vụ án, thiết bị, người dùng, phiên kéo, audit, gói chứng cứ -> cổng 27018 (27017 để trống cho dự án khác)
+#   ai  faster-whisper (giọng nói -> chữ, GPU) :9001 + LibreOffice (doc/xls/ppt -> docx/xlsx/pptx) :9002
+# LLM + embedding chạy ở container "ollama" có sẵn trên máy (dự án n8n, dùng chung với AnythingLLM).
+x-volumes: &vols
+  - ./data:/data
+  - /mnt/casehdd16tb:/evidence/case:ro
+
+x-gpu: &gpu
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          count: all
+          capabilities: [gpu]
+
+services:
+  fe:
+    build: ./web
+    container_name: mf-fe
+    restart: unless-stopped
+    mem_limit: 256m
+    ports:
+      - "8000:80"
+    depends_on:
+      - be
+
+  mongo:
+    image: mongo:7
+    container_name: mf-mongo
+    restart: unless-stopped
+    mem_limit: 1g
+    command: --wiredTigerCacheSizeGB 0.5
+    ports:
+      - "27018:27017"
+    volumes:
+      - ./data/mongo:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok"]
+      interval: 30s
+      start_period: 20s
+
+  be:
+    build: .
+    container_name: mf-be
+    restart: unless-stopped
+    mem_limit: 6g              # chặn file độc làm OOM cả máy GPU
+    env_file: .env            # token proxy cũ; environment bên dưới ghi đè để dùng model local
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:              # quay lại Claude qua proxy: xóa 3 dòng ANTHROPIC_*/LLM_MODEL này
+      - ANTHROPIC_BASE_URL=http://host.docker.internal:11434   # Ollama sẵn có trên host (container "ollama", dùng chung với anythingllm)
+      - ANTHROPIC_AUTH_TOKEN=ollama
+      - LLM_MODEL=qwen3-vl-32k
+      - INDEX_WORKERS=2
+      - LLM_TEXT_BUDGET=50000
+      - ASR_URL=http://ai:9001
+      - CONVERT_URL=http://ai:9002
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - EMBED_MODEL=bge-m3
+      - ADB_SERVER_SOCKET=tcp:host.docker.internal:5037   # adb server chạy trên host (giữ USB + uỷ quyền); container chỉ là client
+      - MONGO_URL=mongodb://mongo:27017/mf
+    volumes:
+      - ./data:/data
+      - /mnt/casehdd16tb:/evidence/case:ro
+      - /dev:/dev:ro
+      - /var/run/usbmuxd:/var/run/usbmuxd
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy: *gpu              # GPU chỉ để đọc nvidia-smi cho ô "Trạng thái thiết bị" trên Dashboard
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/stats')"]
+      interval: 30s
+      start_period: 30s
+
+  ai:
+    build:
+      context: .
+      dockerfile: ai/Dockerfile
+    container_name: mf-ai
+    restart: unless-stopped
+    init: true                # chuyển SIGTERM cho start.sh khi docker stop
+    mem_limit: 16g             # 12g whisper + 4g LibreOffice như trước khi gộp
+    volumes: *vols
+    environment:
+      - WHISPER_MODEL=large-v3
+    deploy: *gpu

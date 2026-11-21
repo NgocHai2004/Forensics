@@ -1,0 +1,219 @@
+// Client duy nhất cho backend FastAPI (app/main.py). Mọi page import từ đây, không fetch trực tiếp.
+
+export type Kind = 'image' | 'video' | 'audio' | 'document' | 'other'
+export const KIND_LABEL: Record<Kind, string> = { image: 'Ảnh', video: 'Video', audio: 'Âm thanh', document: 'Tài liệu', other: 'Khác' }
+
+export interface FileItem {
+  id: number
+  path: string
+  name: string
+  ext: string
+  kind: Kind
+  size: number
+  mtime: string           // 'YYYY-MM-DDTHH:MM:SS'
+  sha256: string
+  taken_at: string | null
+  lat: number | null
+  lon: number | null
+  width: number | null
+  height: number | null
+  caption: string | null
+  ocr_text: string | null
+  tags: string | null     // JSON array string
+  text_content: string | null
+  thumb: string | null
+  indexed_at: string
+  error: string | null
+  thumb_url: string | null  // '/thumb/<id>'
+  file_url: string          // '/file/<id>'
+  collection: string | null // bộ dữ liệu (phân loại) khi index/upload
+  device: string | null     // thiết bị thu giữ (devices.name) trong vụ án
+}
+
+export interface IndexRun {
+  id: number
+  folder: string
+  started_at: string
+  finished_at: string | null
+  total: number
+  done: number
+  status: 'running' | 'done' | 'error'
+  message: string | null
+}
+
+export interface Stats {
+  total: number
+  total_size: number
+  by_kind: Partial<Record<Kind, number>>
+  by_month: { month: string; count: number }[]   // month 'YYYY-MM', tăng dần
+  by_day: { day: string; count: number }[]       // 7 ngày gần nhất 'YYYY-MM-DD', tăng dần, ngày trống = 0
+  with_gps: number
+  captioned: number
+  errors: number
+  last_run: IndexRun | null
+}
+
+export interface SystemStats {
+  cpu: number                  // % toàn máy
+  cores: number
+  load: number                 // load average 1 phút
+  ram: { used: number; total: number }    // byte
+  disk: { used: number; total: number }   // byte, ổ chứa dữ liệu index
+  gpu: { name: string; util: number; mem_used: number; mem_total: number; temp: number } | null  // null khi không đọc được nvidia-smi
+}
+
+export interface User { username: string; created_at: string }
+
+export interface FilesPage { items: FileItem[]; total: number; page: number; limit: number }
+
+export interface ChatMsg { role: 'user' | 'assistant'; content: string }
+
+// loc: "00:02:10" (audio/video) | "trang 3" | "slide 4" | "Sheet1 dòng 5" | null
+export interface Source { id: number; name: string; kind: Kind; thumb_url: string | null; file_url: string; caption: string | null; loc: string | null }
+
+/** Link mở đúng vị trí: thời gian -> media fragment #t=<giây>, "trang N" -> #page=N (trình xem PDF). */
+export const locUrl = (url: string, loc?: string | null) => {
+  if (!loc) return url
+  if (/^\d{1,2}(:\d{2}){1,2}$/.test(loc)) return `${url}#t=${loc.split(':').reduce((a, x) => a * 60 + Number(x), 0)}`
+  const p = /^trang (\d+)$/i.exec(loc)
+  return p ? `${url}#page=${p[1]}` : url
+}
+
+export interface AskResult { answer: string; sources: Source[] }
+
+export type IndexStatus = IndexRun | { status: 'idle' }
+
+export interface Case {
+  name: string                 // = files.collection
+  note: string | null
+  created_at: string
+  count: number
+  by_kind: Partial<Record<Kind, number>>
+  device_count: number         // số thiết bị thu giữ trong vụ án
+}
+
+// Gói chứng cứ đã đóng gói (app/packaging.py): archive tar.gz + manifest SHA256
+export interface PackageItem {
+  id: number
+  source: string
+  name: string
+  size: number
+  sha256: string
+  status: 'pending' | 'running' | 'done' | 'error' | 'verified' | 'corrupt'
+  error: string | null
+  created_at: string
+}
+
+// Nhật ký hoạt động (audit log): chuỗi hành động trên vụ án/thiết bị/gói chứng cứ
+export interface AuditEntry { id: number; created_at: string; action: string; target: string | null; detail: string | null }
+
+// Phiên thu thập (mỗi lần pull điện thoại): mã phiên, thiết bị, thời gian, dung lượng, trạng thái
+export interface SessionItem {
+  id: number; case_name: string; device: string; operator: string | null
+  started_at: string; finished_at: string | null; bytes: number
+  status: 'running' | 'done' | 'error'; error: string | null
+}
+
+export type DeviceType = 'laptop' | 'hdd' | 'phone' | 'camera' | 'video' | 'other'
+export interface Device { name: string; type: DeviceType; note: string | null; created_at: string; count: number }
+
+// Ổ đĩa vật lý máy chủ (NVMe/M.2, SATA, USB) từ /sys/block — chỉ nhận diện, không đọc nội dung
+export interface DiskItem { name: string; size: number; model: string | null; serial: string | null; transport: string; partitions: number }
+
+// Trạng thái thiết bị ADB (cảnh báo chủ động): state = device (sẵn sàng) | unauthorized | offline | ...
+export interface PhoneStatus { devices: { serial: string; state: string }[]; bad: { serial: string; state: string }[] }
+
+// type: case | device | phone | email | plate | imei; name: tên trong danh bạ (SĐT); files: số tài liệu nhắc tới / của thiết bị
+// cases: số vụ án cùng nhắc tới thực thể này (chỉ có ở sơ đồ tất cả vụ án)
+export interface GraphNode { id: string; type: string; label: string; dtype?: DeviceType; name?: string | null; files?: number; cases?: number }
+// rels: [loại liên kết, số lần]; ev: dòng bằng chứng (file id, tên file, vị trí, câu gốc), tối đa 30
+export interface Evidence { id: number; file: string; loc: string | null; text: string }
+export interface GraphEdge { from: string; to: string; rels: [string, number][]; n: number; ev: Evidence[] }
+export interface Graph { nodes: GraphNode[]; edges: GraphEdge[] }
+
+export class ApiError extends Error {
+  status: number
+  constructor(status: number, message: string) { super(message); this.status = status }
+}
+
+async function req<T>(url: string, body?: unknown): Promise<T> {
+  const r = await fetch(url, body === undefined ? undefined : {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })
+  const data = await r.json().catch(() => ({}))
+  if (!r.ok) throw new ApiError(r.status, typeof data.detail === 'string' ? data.detail : `HTTP ${r.status}`)
+  return data as T
+}
+
+export const api = {
+  stats: () => req<Stats>('/api/stats'),
+  system: () => req<SystemStats>('/api/system'),
+  users: () => req<User[]>('/api/users'),
+  createUser: (username: string, password: string) => req<User>('/api/users', { username, password }),
+  login: (username: string, password: string) => req<{ username: string; open: boolean }>('/api/login', { username, password }),
+  // Tải đủ mọi trang (server giới hạn 200/lần) để danh sách và số đếm khớp tổng thật của vụ án.
+  allFiles: async (collection: string) => {
+    const items: FileItem[] = []
+    for (let page = 1; ; page++) {
+      const r = await api.files({ collection, page, limit: 200 })
+      items.push(...r.items)
+      if (!r.items.length || items.length >= r.total) return items
+    }
+  },
+  files: (p: { kind?: Kind; q?: string; page?: number; limit?: number; collection?: string; device?: string } = {}) => {
+    const qs = new URLSearchParams()
+    if (p.kind) qs.set('kind', p.kind)
+    if (p.q) qs.set('q', p.q)
+    if (p.page) qs.set('page', String(p.page))
+    if (p.limit) qs.set('limit', String(p.limit))
+    if (p.collection) qs.set('collection', p.collection)
+    if (p.device) qs.set('device', p.device)
+    return req<FilesPage>(`/api/files?${qs}`)
+  },
+  file: (id: number) => req<FileItem>(`/api/files/${id}`),
+  deleteFile: (c: string, id: number) => req<{ deleted: number; trashed: number }>('/api/files/delete', { case: c, id }),
+  startIndex: (folder: string, collection?: string) =>
+    req<{ status: 'started'; folder: string }>('/api/index', { folder, collection: collection || null }),
+  indexStatus: () => req<IndexStatus>('/api/index/status'),
+  collections: () => req<{ collection: string; count: number }[]>('/api/collections'),
+  upload: async (files: File[], collection: string, device?: string) => {
+    const fd = new FormData()
+    fd.set('collection', collection)
+    if (device) fd.set('device', device)
+    // chọn thư mục: webkitRelativePath = "thư mục/con/file.jpg" -> server giữ nguyên cây thư mục
+    for (const f of files) fd.append('files', f, f.webkitRelativePath || f.name)
+    const r = await fetch('/api/upload', { method: 'POST', body: fd })  // không đặt Content-Type để browser tự thêm boundary
+    const data = await r.json().catch(() => ({}))
+    if (!r.ok) throw new ApiError(r.status, typeof data.detail === 'string' ? data.detail : `HTTP ${r.status}`)
+    return data as { saved: number; folder: string; status: 'started' }
+  },
+  cases: () => req<Case[]>('/api/cases'),
+  createCase: (name: string, note?: string) => req<Case>('/api/cases', { name, note: note || null }),
+  updateCase: (name: string, newName: string, note: string) => req<Case>('/api/cases/update', { name, new_name: newName, note: note || null }),
+  deleteCase: (name: string) => req<{ deleted: number; trashed: number; trash: string | null }>('/api/cases/delete', { name }),
+  devices: (c: string) => req<{ items: Device[]; unassigned: number }>(`/api/devices?case=${encodeURIComponent(c)}`),
+  usb: () => req<{ items: { type: DeviceType; name: string; model?: string | null; serial?: string | null; usb_id?: string | null; ios?: boolean }[] }>('/api/usb'),
+  disks: () => req<{ disks: DiskItem[] }>('/api/disk'),
+  phoneSim: (serial?: string) => req<{ serial: string; props: Record<string, string> }>(`/api/phone/sim${serial ? `?serial=${encodeURIComponent(serial)}` : ''}`),
+  phoneStatus: () => req<PhoneStatus>('/api/phone/status'),
+  pull: (c: string, device: string, serial?: string) => req<{ status: 'started'; serial: string }>('/api/pull', { case: c, device, serial: serial || null }),
+  pullStatus: () => req<{ running: boolean; device: string | null; phase: 'count' | 'pull' | 'index' | null; files: number; total_files: number; bytes: number; total_bytes: number; pct: number; done: boolean; error: string | null; log: string; index?: { status: string; done: number; total: number } }>('/api/pull/status'),
+  createDevice: (c: string, name: string, type: DeviceType) => req<Device>('/api/devices', { case: c, name, type }),
+  deleteDevice: (c: string, name: string) => req<{ deleted: number; trashed: number }>('/api/devices/delete', { case: c, name }),
+  createPackage: (c: string, device?: string) => req<{ status: 'started' }>('/api/image', { case: c, device: device || null }),
+  images: (c: string) => req<PackageItem[]>(`/api/images?case=${encodeURIComponent(c)}`),
+  verifyImage: (id: number) => req<{ status: string; mismatches: string[]; count: number }>(`/api/images/${id}/verify`),
+  imageUrl: (id: number) => `/api/images/${id}/file`,
+  audit: (limit = 50) => req<AuditEntry[]>(`/api/audit?limit=${limit}`),
+  sessions: (c?: string) => req<SessionItem[]>(`/api/sessions${c ? `?case=${encodeURIComponent(c)}` : ''}`),
+  graph: (c: string) => req<Graph>(`/api/graph?case=${encodeURIComponent(c)}`),
+  graphAll: () => req<Graph>('/api/graph/all'),
+  ask: (question: string, history: ChatMsg[], collection?: string, extra: string[] = []) =>
+    req<AskResult>('/api/ask', { question, history, collection: collection || null, extra }),
+}
+
+export const fmtSize = (n: number) => {
+  const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++ }
+  return `${i ? n.toFixed(1) : n} ${u[i]}`
+}

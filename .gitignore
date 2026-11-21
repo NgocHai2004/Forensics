@@ -1,0 +1,10 @@
+data/
+.env
+**/__pycache__/
+*.pyc
+web/node_modules/
+app/static/dist/
+
+# bản sao lưu khi sửa tay (giống .dockerignore)
+.cleanup/
+*.bak*

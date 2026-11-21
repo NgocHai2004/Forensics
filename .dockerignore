@@ -1,0 +1,13 @@
+.git
+data/
+ollama/
+graphify-out/
+docs/
+web/node_modules/
+app/static/dist/
+**/__pycache__/
+*.pyc
+ssh.md
+.env
+.cleanup/
+*.bak*
