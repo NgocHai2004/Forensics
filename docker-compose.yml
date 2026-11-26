@@ -68,6 +68,10 @@ services:
       - /mnt/casehdd16tb:/evidence/case:ro
       - /dev:/dev:ro
       - /var/run/usbmuxd:/var/run/usbmuxd
+    # ổ USB / thẻ nhớ: chỉ cho ĐỌC thiết bị khối (r) -> container không thể ghi lên ổ chứng cứ
+    device_cgroup_rules:
+      - "b 8:* r"
+      - "b 179:* r"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy: *gpu              # GPU chỉ để đọc nvidia-smi cho ô "Trạng thái thiết bị" trên Dashboard

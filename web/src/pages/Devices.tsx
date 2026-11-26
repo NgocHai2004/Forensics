@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import type { FormEvent, MouseEvent } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
+import type { FormEvent, MouseEvent, ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   FolderPlus,
@@ -9,18 +9,22 @@ import {
   HardDrive,
   ShieldCheck,
   Smartphone,
-  Tablet,
   Layers,
   Files,
   AlertTriangle,
   Plus,
   LogOut,
-  Download
+  Download,
+  Play,
+  RotateCcw,
+  KeyRound,
+  RefreshCw
 } from 'lucide-react'
 import { logout } from '../auth'
+import { DeviceThumb } from '../components/DeviceThumb'
 import { useI18n } from '../i18n'
 import { api, ApiError, fmtSize } from '../api'
-import type { Case, Device, DeviceAcqState, DeviceInfo, SystemStats } from '../api'
+import type { Case, Device, DeviceAcqState, DeviceInfo, SystemStats, SyncItem } from '../api'
 
 type Usb = Awaited<ReturnType<typeof api.usb>>['items'][number]
 type Stage = DeviceAcqState['stage']
@@ -60,6 +64,14 @@ const BTN2 = 'inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-lg 
 const DLG = 'm-auto w-[min(28rem,calc(100vw-2rem))] rounded-xl bg-card p-0 text-ink shadow-xl backdrop:bg-navy/40'
 const CLOSE = 'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-muted transition-colors duration-150 hover:bg-hover hover:text-ink'
 
+const SYNC_LABEL: Record<SyncItem['status'], string> = {
+  pending: 'Chờ gửi', sending: 'Đang gửi', done: 'Đã đồng bộ', error: 'Lỗi gửi', skipped: 'Bỏ qua',
+}
+const SYNC_CLS: Record<SyncItem['status'], string> = {
+  pending: 'bg-amber-50 text-amber-700', sending: 'bg-blue-50 text-blue-700', done: 'bg-emerald-50 text-emerald-700',
+  error: 'bg-rose-50 text-rose-700', skipped: 'bg-slate-100 text-muted',
+}
+
 function formatDateTime(dStr?: string) {
   if (!dStr) return '—'
   try {
@@ -72,6 +84,26 @@ function formatDateTime(dStr?: string) {
   }
 }
 
+// Nút icon trên thẻ: nhãn hiện ngay khi di chuột / focus (title của trình duyệt hiện chậm, không hiện khi dùng bàn phím).
+// Bọc span: nút bị khoá vẫn hiện lý do; chặn click lan lên thẻ (thẻ trích xuất xong bấm vào là mở chứng cứ).
+function IconBtn({ label, tip, disabled, onClick, children }: {
+  label: string; tip: string; disabled?: boolean; onClick: (e: MouseEvent) => void; children: ReactNode
+}) {
+  const id = useId()
+  return (
+    <span className="group/tip relative flex shrink-0" onClick={e => e.stopPropagation()}>
+      <button type="button" disabled={disabled} onClick={onClick} aria-label={label} aria-describedby={tip !== label ? id : undefined}
+        className="cursor-pointer rounded p-0.5 text-primary transition-colors hover:bg-primary-soft disabled:cursor-not-allowed disabled:text-muted/50 disabled:hover:bg-transparent">
+        {children}
+      </button>
+      <span id={id} role="tooltip"
+        className="invisible absolute bottom-full right-0 z-30 w-max max-w-56 rounded-md bg-navy px-2 py-1 text-[11px] font-medium leading-snug text-white opacity-0 shadow-lg transition-opacity duration-100 group-hover/tip:visible group-hover/tip:opacity-100 group-focus-within/tip:visible group-focus-within/tip:opacity-100">
+        {tip}
+      </span>
+    </span>
+  )
+}
+
 export default function Devices() {
   const navigate = useNavigate()
   const { t } = useI18n()
@@ -81,7 +113,6 @@ export default function Devices() {
   const [devs, setDevs] = useState<Device[]>([])
   const [states, setStates] = useState<Record<string, DeviceAcqState>>({})
   const [err, setErr] = useState('')
-  const [imgErr, setImgErr] = useState<Record<string, boolean>>({})
   // dự kiến dữ liệu lấy được của máy đang cắm: undefined = chưa hỏi, null = đang ước tính, { error } = không đọc được (kèm lý do)
   const [est, setEst] = useState<Record<string, { bytes: number; files: number | null } | { error: string } | null>>({})
   const [newName, setNewName] = useState('')
@@ -134,6 +165,44 @@ export default function Devices() {
     if (e.target === e.currentTarget) e.currentTarget.close()
   }
 
+  // Đồng bộ về hệ thống trung tâm: chọn thiết bị trong vụ án -> đưa vào hàng chờ gửi image + metadata
+  const syncDlg = useRef<HTMLDialogElement>(null)
+  const [syncSel, setSyncSel] = useState<Set<string>>(new Set())
+  const [syncs, setSyncs] = useState<Record<string, SyncItem>>({})
+  const [syncBusy, setSyncBusy] = useState(false)
+  const [syncMsg, setSyncMsg] = useState('')
+  const byDevice = (items: SyncItem[]) => Object.fromEntries(items.filter(s => s.status !== 'skipped').map(s => [s.device, s]))
+
+  const openSync = () => {
+    setSyncSel(new Set())
+    setSyncMsg('')
+    api.syncs(caseName).then(r => setSyncs(byDevice(r.items))).catch(() => setSyncs({}))
+    syncDlg.current?.showModal()
+  }
+
+  const toggleSync = (name: string) => setSyncSel(s => {
+    const n = new Set(s)
+    if (!n.delete(name)) n.add(name)
+    return n
+  })
+
+  const doSync = async () => {
+    setSyncBusy(true)
+    setSyncMsg('')
+    try {
+      const r = await api.syncQueue(caseName, [...syncSel])
+      setSyncs(m => ({ ...m, ...byDevice(r.items) }))
+      setSyncSel(new Set())
+      const queued = r.items.filter(s => s.status !== 'skipped').length
+      setSyncMsg(`Đã đưa ${queued} thiết bị vào hàng chờ đồng bộ`
+        + (queued < r.items.length ? `; bỏ qua ${r.items.length - queued} máy chưa đóng image` : ''))
+    } catch (e) {
+      setSyncMsg((e as Error).message)
+    } finally {
+      setSyncBusy(false)
+    }
+  }
+
   const create = async (e: FormEvent) => {
     e.preventDefault()
     if (!newName.trim()) { setCreateErr('Nhập tên vụ án'); return }
@@ -164,9 +233,9 @@ export default function Devices() {
       Promise.all([api.usb(), api.deviceStatus(), caseName ? api.devices(caseName) : null])
         .then(([u, s, dv]) => {
           if (!alive) return
-          setUsb(u.items.filter(d => d.type === 'phone'))
+          setUsb(u.items.filter(d => d.type === 'phone' || d.type === 'hdd'))
           setStates(Object.fromEntries(s.items.map(x => [`${x.case}\n${x.device}`, x])))
-          setDevs(dv ? dv.items.filter(x => x.type === 'phone') : [])
+          setDevs(dv ? dv.items.filter(x => x.type === 'phone' || x.type === 'hdd') : [])
         })
         .catch(() => {}) // lỗi poll (vd backend đang khởi động lại) không hiện banner; giữ dữ liệu cũ, lần poll sau tự cập nhật
 
@@ -299,6 +368,15 @@ export default function Devices() {
           </div>
 
           <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={!caseName}
+              onClick={openSync}
+              className="inline-flex items-center gap-1.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-40 text-white px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer"
+            >
+              <RefreshCw size={13} aria-hidden="true" />
+              <span>Đồng bộ</span>
+            </button>
             <button
               type="button"
               disabled={!caseName}
@@ -539,25 +617,18 @@ export default function Devices() {
                 {/* Thông tin cơ bản: ảnh/icon, tên, cắm cáp + hệ điều hành */}
                 <div className="flex items-center gap-2.5">
                   <div className="flex h-12 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-line bg-slate-50 text-primary">
-                    {imgErr[c.name] ? (
-                      // không có ảnh thật chắc chắn đúng model -> icon tương tự: mã TB…/iPad/Tab = máy tính bảng
-                      /ipad|\btab\b|\bTB-?\d/i.test(c.name)
-                        ? <Tablet className="h-8 w-8" strokeWidth={1.5} aria-hidden="true" />
-                        : <Smartphone className="h-8 w-8" strokeWidth={1.5} aria-hidden="true" />
-                    ) : (
-                      <img
-                        src={`/api/device-image?v=2&serial=${encodeURIComponent(c.serial ?? '')}&ios=${isIos}&name=${encodeURIComponent(c.usb?.name ?? c.name.split(' · ')[0])}`}
-                        onError={() => setImgErr(m => ({ ...m, [c.name]: true }))}
-                        className="h-full w-full object-contain"
-                        alt={c.name}
-                      />
-                    )}
+                    <DeviceThumb
+                      name={c.dev?.info?.name || c.usb?.name || c.name.split(' · ')[0]}
+                      serial={c.serial}
+                      ios={isIos}
+                      type={c.usb?.type === 'hdd' || c.dev?.type === 'hdd' ? 'hdd' : undefined}
+                    />
                   </div>
                   <div className="min-w-0 flex-1">
                     <h3 className="truncate font-display text-sm font-bold text-navy" title={c.name}>{c.name}</h3>
                     <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted">
                       <span className={`h-2 w-2 shrink-0 rounded-full ${c.usb ? 'bg-emerald-500' : 'bg-slate-400'}`} aria-hidden="true" />
-                      {c.usb ? 'Đang cắm' : 'Đã rút cáp'} · {isIos ? 'iOS' : 'Android'}
+                      {c.usb ? 'Đang cắm' : 'Đã rút cáp'} · {c.usb?.type === 'hdd' || c.dev?.type === 'hdd' ? 'Thẻ nhớ / USB' : isIos ? 'iOS' : 'Android'}
                     </p>
                   </div>
                   {/* vòng tiến độ đóng image / trích xuất ở hàng trên (thay thanh ngang + % trong nhãn) */}
@@ -579,48 +650,32 @@ export default function Devices() {
                       <span className="sr-only">Có lỗi</span>
                     </span>
                   )}
+                  {stage === 'new' && !unplugged && (() => {
+                    const ready = !!(c.usb?.ios || c.usb?.adb === 'device' || (c.usb?.type === 'hdd' && c.usb.size))
+                    const why = c.usb?.type === 'hdd' ? 'Chưa có thẻ nhớ trong khe' : 'Bật Gỡ lỗi USB / tin cậy máy tính trên máy'
+                    return (
+                      <IconBtn disabled={!ready || !caseName} onClick={(e) => startImage(c, e)}
+                        label={ready ? `Đóng image ${c.name}` : why} tip={ready ? 'Đóng image' : why}>
+                        <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                      </IconBtn>
+                    )
+                  })()}
+                  {/* hành động phụ là icon ở hàng trên (như nút đóng image): thẻ giữ nguyên bố cục, không thêm nút chữ */}
+                  {(stage === 'partial' || stage === 'error') && (
+                    <IconBtn disabled={!caseName} onClick={() => act(c, stage)} label={`${cfg.btn} ${c.name}`} tip={cfg.btn}>
+                      {stage === 'partial'
+                        ? <Play className="h-3.5 w-3.5" aria-hidden="true" />
+                        : <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />}
+                    </IconBtn>
+                  )}
+                  {isIos && c.usb && c.serial && (stage === 'done' || stage === 'imaged') && (
+                    <IconBtn disabled={!caseName} onClick={(e) => reacquire(c, e)} label={`Thu thập lại (backup mã hoá) ${c.name}`}
+                      tip="Thu thập lại (backup mã hoá): lấy thêm Keychain, lịch sử Safari, nhật ký cuộc gọi, Wi-Fi, Health. Máy tự tắt mã hoá sau khi xong; dữ liệu cũ giữ nguyên.">
+                      <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
+                    </IconBtn>
+                  )}
                   {openable && <ChevronRight className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />}
                 </div>
-
-                {stage === 'new' && (
-                  unplugged || !(c.usb?.ios || c.usb?.adb === 'device') ? (
-                    <p className="mt-auto text-center text-[11px] text-muted">
-                      {unplugged ? 'Cắm cáp để đóng image' : 'Bật Gỡ lỗi USB / tin cậy máy tính trên máy'}
-                    </p>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={!caseName}
-                      onClick={(e) => startImage(c, e)}
-                      title="Đóng image & băm SHA-256"
-                      aria-label={`Đóng image ${c.name}`}
-                      className="mt-auto mx-auto flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-primary text-white shadow-sm transition-colors duration-150 hover:bg-primary-hover disabled:cursor-not-allowed disabled:bg-line disabled:text-muted"
-                    >
-                      <Download className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                  )
-                )}
-                {(stage === 'partial' || stage === 'error') && (
-                  <button
-                    type="button"
-                    disabled={!caseName}
-                    onClick={() => act(c, stage)}
-                    className="mt-auto flex w-full cursor-pointer items-center justify-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors duration-150 hover:bg-primary-hover disabled:cursor-not-allowed disabled:bg-line disabled:text-muted"
-                  >
-                    {cfg.btn}
-                  </button>
-                )}
-                {isIos && c.usb && c.serial && (stage === 'done' || stage === 'imaged') && (
-                  <button
-                    type="button"
-                    disabled={!caseName}
-                    onClick={(e) => reacquire(c, e)}
-                    title="Backup lại qua bản mã hoá: lấy thêm Keychain, lịch sử Safari, nhật ký cuộc gọi, Wi-Fi, Health. Máy tự tắt mã hoá sau khi xong; dữ liệu cũ giữ nguyên."
-                    className="mt-auto w-full cursor-pointer rounded-lg border border-primary/40 px-3 py-1.5 text-xs font-semibold text-primary transition-colors duration-150 hover:bg-primary-soft disabled:cursor-not-allowed disabled:border-line disabled:text-muted"
-                  >
-                    Thu thập lại (backup mã hoá)
-                  </button>
-                )}
 
                 {/* Chi tiết: hiện khi di chuột hoặc focus (bàn phím/chạm) vào thẻ; nằm trong thẻ nên rê chuột xuống vẫn giữ */}
                 <div
@@ -805,6 +860,85 @@ export default function Devices() {
             </button>
           </div>
         </form>
+      </dialog>
+
+      {/* Đồng bộ vụ án: chọn thiết bị đã đóng image -> hàng chờ gửi lên hệ thống trung tâm */}
+      <dialog ref={syncDlg} aria-labelledby="sync-title" onClick={closeOnBackdrop} className={DLG}>
+        {(() => {
+          const inCase = cards.filter(c => c.dev)
+          const okNames = inCase.filter(c => c.dev?.image_name).map(c => c.dev?.name ?? c.name)
+          return (
+            <div className="flex flex-col gap-4 p-5">
+              <div className="flex items-center justify-between gap-2 border-b border-line pb-3">
+                <h2 id="sync-title" className="flex min-w-0 items-center gap-2 font-display text-base font-semibold text-navy">
+                  <RefreshCw className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                  <span className="truncate">Đồng bộ vụ án {caseName}</span>
+                </h2>
+                <button type="button" onClick={() => syncDlg.current?.close()} aria-label="Đóng" className={CLOSE}>
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <p className="text-xs leading-relaxed text-muted">
+                Chọn thiết bị để gửi bản image (kèm SHA-256) và thông tin thiết bị lên hệ thống trung tâm.
+              </p>
+              <label className="flex items-center gap-2 text-sm font-medium text-ink">
+                <input
+                  type="checkbox"
+                  disabled={!okNames.length}
+                  checked={okNames.length > 0 && okNames.every(n => syncSel.has(n))}
+                  onChange={e => setSyncSel(new Set(e.target.checked ? okNames : []))}
+                  className="h-4 w-4 accent-primary"
+                />
+                Chọn tất cả ({okNames.length} thiết bị có image)
+              </label>
+              <fieldset className="max-h-72 space-y-1.5 overflow-y-auto">
+                <legend className="sr-only">Thiết bị trong vụ án</legend>
+                {!inCase.length && <p className="text-sm text-muted">Vụ án chưa có thiết bị</p>}
+                {inCase.map(c => {
+                  const name = c.dev?.name ?? c.name
+                  const ok = !!c.dev?.image_name
+                  const s = syncs[name]
+                  return (
+                    <label
+                      key={name}
+                      className={`flex items-center gap-3 rounded-lg border border-line px-3 py-2 text-sm ${ok ? 'cursor-pointer hover:bg-hover' : 'cursor-not-allowed opacity-60'}`}
+                    >
+                      <input
+                        type="checkbox"
+                        disabled={!ok}
+                        checked={syncSel.has(name)}
+                        onChange={() => toggleSync(name)}
+                        className="h-4 w-4 shrink-0 accent-primary"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium text-ink">{name}</span>
+                        <span className="block truncate text-xs text-muted">{ok ? c.dev?.image_name : 'Chưa đóng image'}</span>
+                      </span>
+                      {s && (
+                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${SYNC_CLS[s.status]}`}>
+                          {SYNC_LABEL[s.status]}
+                        </span>
+                      )}
+                    </label>
+                  )
+                })}
+              </fieldset>
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                Chưa kết nối hệ thống trung tâm: thiết bị được đưa vào hàng chờ và sẽ gửi khi cấu hình kết nối xong.
+              </p>
+              {syncMsg && <p role="status" className="text-xs font-medium text-ink">{syncMsg}</p>}
+              <div className="flex justify-end gap-2 border-t border-line pt-2">
+                <button type="button" onClick={() => syncDlg.current?.close()} className={BTN2}>
+                  Đóng
+                </button>
+                <button type="button" disabled={!syncSel.size || syncBusy} onClick={doSync} className={BTN}>
+                  <RefreshCw className={`h-4 w-4 ${syncBusy ? 'animate-spin' : ''}`} aria-hidden="true" />
+                  {syncBusy ? 'Đang xử lý…' : `Đồng bộ (${syncSel.size})`}
+                </button>
+              </div>
+            </div>
+          )
+        })()}
       </dialog>
     </div>
   )

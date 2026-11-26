@@ -35,6 +35,7 @@ import type { Device, DeviceType, FileItem, FilesPage, Graph, PackageItem } from
 import { graphHtml } from '../graphHtml'
 import { useI18n } from '../i18n'
 import { logout } from '../auth'
+import { DeviceThumb } from '../components/DeviceThumb'
 
 const VIS = '/vendor/vis-network.min.js'
 const VIEWS = ['column', 'grid', 'conversation'] as const
@@ -2205,7 +2206,9 @@ function CollectModal({ name, onClose }: { name: string; onClose: () => void }) 
 
               {usb ? (
                 <div className={`rounded p-2 text-xs border flex items-center gap-2 ${usb.ios ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
-                  <Smartphone size={16} className={usb.ios ? 'text-red-500' : 'text-emerald-600'} />
+                  <span className={`flex h-9 w-7 shrink-0 items-center justify-center overflow-hidden rounded ${usb.ios ? 'text-red-500' : 'text-emerald-600'}`}>
+                    <DeviceThumb name={usb.name} serial={usb.serial} ios={usb.ios} type={usb.type} className="h-4 w-4" />
+                  </span>
                   <span>
                     Phát hiện thiết bị kết nối: <strong>{usb.name}</strong> ({usb.serial || 'USB'})
                     {usb.ios && (
@@ -2660,7 +2663,9 @@ function DeviceMgrModal({
                   className="flex items-center justify-between rounded border border-slate-200 p-2 text-xs bg-slate-50"
                 >
                   <div className="flex items-center gap-2">
-                    <Smartphone size={14} className="text-slate-500" />
+                    <span className="flex h-9 w-7 shrink-0 items-center justify-center overflow-hidden rounded text-slate-500">
+                      <DeviceThumb name={d.info?.name || d.name} serial={d.serial} type={d.type} className="h-4 w-4" />
+                    </span>
                     <div>
                       <p className="font-semibold text-slate-800">{d.name}</p>
                       <p className="text-[10.5px] text-slate-500">{t(DEVICE_LABELS[d.type])}</p>

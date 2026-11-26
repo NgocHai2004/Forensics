@@ -144,6 +144,11 @@ export interface Device {
   index_run?: { status: 'running' | 'done' | 'error'; done: number; total: number; message: string | null } | null
   info?: DeviceInfo                         // thông tin máy đọc từ dữ liệu đã thu
 }
+// Đồng bộ về hệ thống trung tâm: lần gần nhất của mỗi thiết bị (skipped = chưa đóng image, không vào hàng chờ)
+export interface SyncItem {
+  device: string; status: 'pending' | 'sending' | 'done' | 'error' | 'skipped'; error?: string | null
+  package_name?: string; sha256?: string; size?: number; created_at?: string
+}
 // Thông tin máy từ getprop/dumpsys (Android) hoặc ideviceinfo (iPhone) đã thu; storage_* = bộ nhớ máy (byte)
 export interface DeviceInfo {
   name?: string | null; model?: string | null; os?: string | null; patch?: string | null; build?: string | null
@@ -244,7 +249,7 @@ export const api = {
   deleteCase: (name: string) => req<{ deleted: number; trashed: number; trash: string | null }>('/api/cases/delete', { name }),
   devices: (c: string) => req<{ items: Device[]; unassigned: number }>(`/api/devices?case=${encodeURIComponent(c)}`),
   // adb: 'device' sẵn sàng | 'unauthorized' chờ cho phép | 'offline' | null = chưa bật gỡ lỗi USB (chỉ sạc/MTP)
-  usb: () => req<{ items: { type: DeviceType; name: string; model?: string | null; serial?: string | null; usb_id?: string | null; ios?: boolean; adb?: string | null }[] }>('/api/usb'),
+  usb: () => req<{ items: { type: DeviceType; name: string; model?: string | null; serial?: string | null; usb_id?: string | null; ios?: boolean; adb?: string | null; block?: string | null; size?: number }[] }>('/api/usb'),
   disks: () => req<{ disks: DiskItem[] }>('/api/disk'),
   phoneSim: (serial?: string) => req<{ serial: string; props: Record<string, string> }>(`/api/phone/sim${serial ? `?serial=${encodeURIComponent(serial)}` : ''}`),
   phoneStatus: () => req<PhoneStatus>('/api/phone/status'),
@@ -252,6 +257,8 @@ export const api = {
   deviceEstimate: (serial: string) => req<{ bytes: number; files: number | null }>(`/api/device/estimate?serial=${encodeURIComponent(serial)}`),
   deviceImage: (c: string, device: string, serial?: string) => req<{ status: 'started'; serial: string }>('/api/device/image', { case: c, device, serial: serial || null }),
   deviceExtract: (c: string, device: string) => req<{ status: 'started' }>('/api/device/extract', { case: c, device }),
+  syncs: (c: string) => req<{ items: SyncItem[] }>(`/api/sync?case=${encodeURIComponent(c)}`),
+  syncQueue: (c: string, devices: string[]) => req<{ items: SyncItem[] }>('/api/sync', { case: c, devices }),
   pull: (c: string, device: string, serial?: string) => req<{ status: 'started'; serial: string }>('/api/pull', { case: c, device, serial: serial || null }),
   pullStatus: () => req<{ running: boolean; device: string | null; phase: 'count' | 'pull' | 'index' | null; files: number; total_files: number; bytes: number; total_bytes: number; pct: number; done: boolean; error: string | null; log: string; index?: { status: string; done: number; total: number } }>('/api/pull/status'),
   createDevice: (c: string, name: string, type: DeviceType) => req<Device>('/api/devices', { case: c, name, type }),

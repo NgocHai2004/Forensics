@@ -170,7 +170,8 @@ def now():
 
 def init_db(db_path):
     os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
-    conn = sqlite3.connect(db_path, check_same_thread=False)
+    # timeout 60 s: nhiều máy trích xuất song song cùng ghi index.db -> chờ khoá thay vì lỗi "database is locked" sau 5 s
+    conn = sqlite3.connect(db_path, check_same_thread=False, timeout=60)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
@@ -914,7 +915,6 @@ def get_file(conn, file_id):
 if __name__ == "__main__" and sys.argv[1:2] == ["--pdf"]:  # tiến trình con của pdf_chunks
     sys.stdout.buffer.write(pickle.dumps(pdf_pages(sys.argv[2])))
 elif __name__ == "__main__":
-    import shutil
     import sys
     import types
     from PIL import ImageDraw

@@ -164,6 +164,8 @@ _SRC_RE = re.compile(r"/_ios_files/([^/]+)/|/sdcard/(?:Android/(?:data|media|obb
 
 
 def _src(path: str) -> str:
+    if dk := re.search(r"/_disk_files/p\d+/(?:([^/]+)/)?", path):  # ổ USB / thẻ nhớ: theo thư mục gốc trên ổ
+        return {"dcim": "Camera / Ảnh", "$orphanfiles": "Tệp đã xoá"}.get((dk[1] or "").lower(), dk[1] or "Thư mục gốc")
     if "/_records/" in path:  # danh bạ / cuộc gọi / ghi chú do _records_export xuất
         return "Ghi chú" if "/_records/ghi_chu/" in path else "Danh bạ & Cuộc gọi"
     if c := re.search(r"/_chat/([^/]+)/", path):  # hội thoại xuất từ CSDL app (_zalo_export)
@@ -512,14 +514,16 @@ IPAD_PT = {
 def _device_query(serial: str, ios: bool, name: str) -> str:
     """Tra ten thuong mai chinh xac (cho query search anh). Tra ve chuoi co the rong."""
     try:
-        if ios:
-            pt = subprocess.run(["ideviceinfo", "-k", "ProductType"], capture_output=True, text=True, timeout=30).stdout.strip()
+        if ios and serial:  # chỉ hỏi đúng máy; không serial thì không hỏi (sẽ trả nhầm iPhone khác đang cắm)
+            pt = subprocess.run(["ideviceinfo", "-u", serial, "-k", "ProductType"],
+                                capture_output=True, text=True, timeout=30).stdout.strip()
             if pt in IPAD_PT:
                 return IPAD_PT[pt]
             if pt in IPHONE_PT:
                 return IPHONE_PT[pt]
-            return "iPad" if pt.startswith("iPad") else (pt or "iPhone")
-        if serial:
+            if pt:
+                return "iPad" if pt.startswith("iPad") else pt
+        elif serial:  # Android; iPhone đã rút cáp không được rơi vào đây (adb với serial iPhone -> tên rỗng)
             def gp(k):
                 try:
                     return subprocess.run(["adb", "-s", serial, "shell", "getprop", k], capture_output=True, text=True, timeout=15).stdout.strip()
@@ -532,7 +536,8 @@ def _device_query(serial: str, ios: bool, name: str) -> str:
         pass
     # máy đã rút cáp: mã model nằm trong tên thiết bị (vd "LENOVO TB305XU") -> tra tên thương mại
     for tok in reversed((name or "").split()):
-        if (m := _market_name(tok)):
+        # chỉ tra chữ giống mã model (TB305XU, SM-A556E): "Max", "K30", "K9" từng khớp nhầm máy khác (Smart Max, Hafury K30...)
+        if len(tok) >= 5 and re.search(r"[A-Za-z]", tok) and re.search(r"\d", tok) and (m := _market_name(tok)):
             return m
     return name or ""
 
@@ -576,7 +581,10 @@ def _wiki_image(name: str):
         r = json.load(urllib.request.urlopen(urllib.request.Request("https://en.wikipedia.org/w/api.php?" + q, headers=WIKI_UA), timeout=20))
         for p in sorted(r.get("query", {}).get("pages", {}).values(), key=lambda p: p.get("index", 99)):
             src = (p.get("thumbnail") or {}).get("source", "")
-            if words and src and words <= set(re.findall(r"[a-z0-9]+", p.get("title", "").lower())):
+            title = set(re.findall(r"[a-z0-9]+", p.get("title", "").lower()))
+            nums = {w for w in words if re.search(r"\d", w)} - {"4g", "5g", "lte"}  # mạng không phải số hiệu máy
+            # khớp đủ tên; hoặc trang dòng máy: tên trang nằm trong tên máy và có đủ số hiệu (11, k30, 5g...) — tránh trang "iPhone" chung
+            if words and src and (words <= title or (len(title) >= 2 and title <= words and nums and nums <= title)):
                 return urllib.request.urlopen(urllib.request.Request(src, headers=WIKI_UA), timeout=20).read()
     except Exception:  # noqa: BLE001 - không có mạng: FE hiện icon
         pass
@@ -636,14 +644,36 @@ def _dev_info(folder: Path) -> dict:
     return {}
 
 
+MODEL_IMG = DATA / "deviceimg" / "models"
+
+
+def _model_file(q: str):
+    """Ảnh trong thư mục models khớp tên máy: tên tệp trùng hẳn, hoặc các từ của tên tệp nằm trong tên máy và
+    có đủ số hiệu model (vd tệp "Redmi K30 5G" cho máy "Xiaomi Redmi K30 5G"). Nhiều tệp khớp -> tên dài nhất."""
+    tok = lambda s: set(re.findall(r"[a-z0-9]+", s.lower()))
+    want = tok(q)
+    nums = {w for w in want if re.search(r"\d", w)} - {"4g", "5g", "lte"}
+    best = None
+    for f in MODEL_IMG.rglob("*") if MODEL_IMG.is_dir() else ():
+        if f.suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp"):
+            continue
+        have = tok(f.stem)
+        if have == want or (have and have <= want and nums <= have):
+            if best is None or len(have) > len(tok(best.stem)):
+                best = f
+    return best
+
+
 @app.get("/api/device-image")
-def device_image(serial: str = "", ios: bool = False, name: str = ""):
+def device_picture(serial: str = "", ios: bool = False, name: str = ""):
     """Ảnh thật đúng model: mã model -> tên thương mại (Google Play) -> ảnh trang Wikipedia khớp tên. 404 => FE hiện icon."""
     q = _device_query(serial, ios, name)
     if not q:
         raise HTTPException(404, "no model")
     ddir = DATA / "deviceimg"
     ddir.mkdir(parents=True, exist_ok=True)
+    if own := _model_file(q):
+        return FileResponse(own, headers={"Cache-Control": "public, max-age=3600"})
     fp = ddir / (hashlib.md5(("wiki|" + q).encode()).hexdigest() + ".img")  # khóa mới: bỏ qua ảnh Bing sai đã cache
     miss = fp.with_suffix(".none")
     if not fp.exists():
@@ -664,6 +694,69 @@ def device_image(serial: str = "", ios: bool = False, name: str = ""):
         ctype = "image/jpeg"
     return Response(content=fp.read_bytes(), media_type=ctype,
                     headers={"Cache-Control": "public, max-age=86400"})
+
+_disk_sig_cache: dict = {}
+
+
+def _disk_sig(block: str, size: int) -> str:
+    """8 ký tự hash của 64 KB đầu thẻ (MBR + boot sector có số serial phân vùng): đổi thẻ khác trong cùng khe -> khác thiết bị."""
+    k = (block, size)
+    if k not in _disk_sig_cache:
+        try:
+            with open(f"/dev/{block}", "rb") as f:  # chỉ đọc
+                _disk_sig_cache[k] = hashlib.sha1(f.read(65536)).hexdigest()[:8]
+        except OSError:
+            return ""  # chưa có quyền / thẻ lỗi: không cache, lần sau thử lại
+    return _disk_sig_cache[k]
+
+
+def _blk_size(b: Path) -> int:
+    try:
+        return int((b / "size").read_text()) * 512
+    except (OSError, ValueError):
+        return 0
+
+
+def _usb_disk_items(d: Path, name: str, serial: str, usb_id: str) -> list:
+    """Ổ khối của thiết bị USB lưu trữ: USB/ổ cứng 1 mục; đầu đọc thẻ mỗi khe 1 mục (khe trống size 0)."""
+    real = str(d.resolve()) + "/"
+    blocks = [b for b in sorted(Path("/sys/block").glob("sd*")) if str((b / "device").resolve()).startswith(real)]
+    out = []
+    for b in blocks or [None]:
+        size = _blk_size(b) if b else 0
+        if not size and b:
+            for k in [k for k in _disk_sig_cache if k[0] == b.name]:
+                _disk_sig_cache.pop(k)  # rút thẻ: quên chữ ký cũ
+        lun = (b / "device").resolve().name.rsplit(":", 1)[-1] if b else "0"
+        card = bool(b) and _usb_field(b, "removable") == "1"
+        sig = _disk_sig(b.name, size) if card and size else ""
+        gb = f"{size / 1e9:.0f} GB" if size else ""
+        slot = f" · khe {int(lun) + 1}" if len(blocks) > 1 and lun.isdigit() else ""
+        label = (f"Thẻ nhớ {gb}" if size else "Đầu đọc thẻ (trống)") + slot if card else f"{name} {gb}".strip()
+        out.append({"type": "hdd", "name": label[:60], "model": name[:60] or None,
+                    "serial": f"{serial or usb_id}:L{lun}" + (f":{sig}" if sig else ""), "usb_id": usb_id,
+                    "ios": False, "adb": None, "block": b.name if b else None, "size": size})
+    return out
+
+
+def _mmc_items() -> list:
+    """Khe thẻ SD gắn trong máy chủ (mmcblk): thẻ có số serial riêng (CID)."""
+    out = []
+    for b in sorted(Path("/sys/block").glob("mmcblk*")):
+        if "boot" in b.name or "rpmb" in b.name:
+            continue
+        size = _blk_size(b)
+        cid = _usb_field(b / "device", "serial") or b.name
+        out.append({"type": "hdd", "name": f"Thẻ nhớ {_usb_field(b / 'device', 'name')} {size / 1e9:.0f} GB".replace("  ", " ")[:60],
+                    "model": _usb_field(b / "device", "name") or None, "serial": f"mmc:{cid}", "usb_id": None,
+                    "ios": False, "adb": None, "block": b.name, "size": size})
+    return out
+
+
+def _disk_of(serial: str | None):
+    """Ổ USB / thẻ nhớ đang cắm có serial này (None nếu là điện thoại hoặc đã rút)."""
+    return next((x for x in usb_devices()["items"] if x["type"] == "hdd" and x["serial"] == serial and x.get("block")), None)
+
 
 @app.get("/api/usb")
 def usb_devices():
@@ -689,13 +782,16 @@ def usb_devices():
         name = product or maker or f"USB {vendor}"
         if maker and product and maker.split()[0].lower() not in product.lower():
             name = f"{maker} {product}"
+        if dtype == "hdd":
+            out += _usb_disk_items(d, name.strip(), serial, f"{vendor}:{_usb_field(d, 'idProduct')}")
+            continue
         out.append({"type": dtype, "name": name.strip()[:60], "model": product.strip()[:60] or None,
                     "serial": serial[:40] or None, "usb_id": f"{vendor}:{_usb_field(d, 'idProduct')}",
                     "ios": vendor == "05ac",
                     # adb: device = đã bật gỡ lỗi USB và cho phép; unauthorized = chờ bấm Cho phép trên máy;
                     # None = chỉ sạc/MTP, chưa bật gỡ lỗi USB (không đọc được gì qua adb)
                     "adb": adb_state.get(serial.lower()) if dtype == "phone" else None})
-    return {"items": out}
+    return {"items": out + _mmc_items()}
 
 
 # Kéo dữ liệu điện thoại qua adb. adb server chạy trên host (giữ USB + uỷ quyền), container nối tới qua ADB_SERVER_SOCKET.
@@ -944,13 +1040,18 @@ def device_estimate(serial: str):
     """Dự kiến dữ liệu lấy được từ máy đang cắm, trước khi đóng image."""
     if serial in _est_cache:
         return _est_cache[serial]
+    if disk := _disk_of(serial):  # ổ USB / thẻ nhớ: chỉ phần đang dùng (không chép vùng trống)
+        if not disk["size"]:
+            raise HTTPException(503, "Khe chưa có thẻ nhớ")
+        _est_cache[serial] = r = {"bytes": _disk_used(f"/dev/{disk['block']}", disk["size"]), "files": None}
+        return r
     ios = _is_ios(serial)
     if not ios:
         why = _adb_ready(serial)
         if why:
             raise HTTPException(503, why)
     try:
-        cmd = (["ideviceinfo", "-q", "com.apple.disk_usage"] if ios else
+        cmd = (["ideviceinfo", "-u", serial, "-q", "com.apple.disk_usage"] if ios else
                [ADB, "-s", serial, "shell", "du -sk /sdcard/ 2>/dev/null; find /sdcard/ -type f 2>/dev/null | wc -l"])
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     except (OSError, subprocess.SubprocessError) as e:
@@ -1020,7 +1121,7 @@ def _ios_collect(serial: str, dest: Path, st: dict, sess_id=None) -> tuple[int, 
                 db.sessions.update_one({"id": sess_id}, {"$set": {"backup_password": None, "backup_encryption": "failed"}})
     try:
         st.update(phase="pull", log="Đang backup iPhone (giữ màn hình mở khoá, đã tin tưởng máy này)…", pct=0, files=0, bytes=0)
-        r = subprocess.run(["idevicebackup2", "backup", "--full", str(bd)],
+        r = subprocess.run(["idevicebackup2", "-u", serial, "backup", "--full", str(bd)],
                            capture_output=True, text=True, timeout=9000)
         tail = " ".join((r.stdout or "").strip().splitlines()[-12:]) or (r.stderr or "")[:200]
         if r.returncode:
@@ -1031,7 +1132,7 @@ def _ios_collect(serial: str, dest: Path, st: dict, sess_id=None) -> tuple[int, 
             if sess_id is not None:
                 db.sessions.update_one({"id": sess_id}, {"$set": {"backup_encryption": "still_on" if off.returncode else "off"}})
     try:
-        info = subprocess.run(["ideviceinfo"], capture_output=True, text=True, timeout=30).stdout
+        info = subprocess.run(["ideviceinfo", "-u", serial], capture_output=True, text=True, timeout=30).stdout
         if info:
             (dest / "_ios_info.txt").write_text(info, encoding="utf-8")
         st.update(log="Đang lấy crash report (giữ nguyên trên máy)…")
@@ -1412,6 +1513,74 @@ def _ios_files(dest: Path, case: str, device: str) -> int:
     return n
 
 
+_MMLS_ROW = re.compile(r"^\d+:\s+\d+(?::\d+)?\s+(\d+)\s+\d+\s+(\d+)\s+(.*)$")  # slot DOS "000:001" / GPT "000"
+
+
+def _disk_parts(src: str, size: int) -> list:
+    """Phân vùng trên ổ (mmls): [(offset sector, số byte)]; không có bảng phân vùng -> cả ổ là 1 hệ tệp.
+    shortcut: coi sector = 512 B; ổ 4Kn cần đọc dòng "Units are in" của mmls."""
+    r = subprocess.run(["mmls", src], capture_output=True, text=True, timeout=300)
+    rows = (_MMLS_ROW.match(l.strip()) for l in r.stdout.splitlines())
+    return [(m[1], int(m[2]) * 512) for m in rows if m] or [(None, size)]
+
+
+def _disk_used(src: str, size: int) -> int:
+    """Byte đang dùng trên ổ, không mount: fsstat từng phân vùng = tổng - trống.
+    shortcut: chỉ ext2/3/4 và FAT32 có số trống; hệ tệp khác (exFAT, NTFS...) tính cả phân vùng, cần chính xác thì đọc bitmap."""
+    used = 0
+    for off, length in _disk_parts(src, size):
+        out = subprocess.run(["fsstat", *(["-o", off] if off else []), src], capture_output=True, text=True, timeout=120).stdout
+        for keys in (("Block Range", "Free Blocks", "Block Size"),  # ext2/3/4
+                     ("Total Range", "Free Sector Count (FS Info)", "Sector Size")):  # FAT32
+            ms = [re.search(rf"^{re.escape(k)}:\s*(?:\d+ - )?(\d+)", out, re.M) for k in keys]
+            if all(ms):
+                end, free, unit = (int(x[1]) for x in ms)
+                used += (end + 1 - free) * unit
+                break
+        else:
+            used += length
+    return used
+
+
+def _disk_collect(disk: dict, dest: Path, st: dict) -> tuple[int, int]:
+    """Ổ USB / thẻ nhớ: chỉ lấy tệp, không chép vùng trống. The Sleuth Kit đọc thẳng /dev/<ổ> (O_RDONLY, không mount):
+    mỗi phân vùng -> _disk_files/p<n>/, -e: cả tệp đã xoá còn metadata. Sau đó đóng gói tar + SHA-256 như điện thoại.
+    Không có bản nguyên khối (.dd) nên về sau không carving vùng trống được."""
+    src = f"/dev/{disk['block']}"
+    subprocess.run(["blockdev", "--setro", src], capture_output=True)  # có quyền thì khoá ghi thêm ở kernel
+    parts, total = _disk_parts(src, disk["size"]), _disk_used(src, disk["size"])
+    out = dest / "_disk_files"
+    if out.exists():
+        shutil.rmtree(out)  # lần trước lỗi giữa chừng: lấy lại từ đầu
+    st.update(phase="pull", total_bytes=total, total_files=0, log="Đang lấy tệp trên ổ (không chép vùng trống)…")
+    stop = threading.Event()
+
+    def watch():
+        while not stop.wait(2):
+            n, s = _tree(out)
+            st.update(files=n, bytes=s, pct=min(99, s * 100 // total) if total else 0,
+                      log=f"Đang lấy tệp: {s / 2**30:.1f} / ~{total / 2**30:.1f} GB")
+    threading.Thread(target=watch, daemon=True).start()
+    try:
+        for i, (off, _) in enumerate(parts, 1):
+            d = out / f"p{i}"
+            d.mkdir(parents=True)
+            subprocess.run(["tsk_recover", "-e", *(["-o", off] if off else []), src, str(d)], capture_output=True, timeout=6 * 3600)
+    finally:
+        stop.set()
+    if not Path(src).exists():
+        raise RuntimeError("Ổ / thẻ nhớ bị rút giữa chừng: cắm lại rồi đóng image lại")
+    n, s = _tree(out)
+    if not n:
+        raise RuntimeError("Không lấy được tệp nào: ổ trống hoặc hệ tệp không hỗ trợ")
+    info = {"device": src, "name": disk["name"], "model": disk.get("model"), "serial": disk["serial"], "size": disk["size"],
+            "used_estimate": total, "partitions": [{"offset_sector": o, "bytes": b} for o, b in parts],
+            "method": "tsk_recover -e từng phân vùng: tệp hiện có + tệp đã xoá còn metadata; không chép vùng trống",
+            "created_at": indexer.now()}
+    (dest / "_disk_info.json").write_text(json.dumps(info, ensure_ascii=False, indent=1), encoding="utf-8")
+    return n, s
+
+
 def _acquire_worker(serial: str, case: str, device: str, dest: Path):
     """ĐÓNG IMAGE: kéo dữ liệu thô + thu thập hệ thống (androidqf), rồi đóng gói tar.gz kèm manifest SHA256.
     Xong -> stage 'imaged'. (Chưa index; index là bước Trích xuất riêng.)"""
@@ -1424,7 +1593,9 @@ def _acquire_worker(serial: str, case: str, device: str, dest: Path):
         sess_id = next_id("sessions")
         db.sessions.insert_one({"id": sess_id, "case_name": case, "device": device, "operator": None, "started_at": indexer.now(),
                                 "finished_at": None, "files": 0, "bytes": 0, "status": "running", "error": None})
-        if _is_ios(serial):
+        if disk := _disk_of(serial):  # ổ USB / thẻ nhớ: chỉ lấy tệp (không chép vùng trống), đóng gói tar như điện thoại
+            n, s = _disk_collect(disk, dest, st)
+        elif _is_ios(serial):
             n, s = _ios_collect(serial, dest, st, sess_id)
         else:
             sim = _sim_props(serial)
@@ -1630,16 +1801,16 @@ def _resolve_serial(serial: str | None) -> str:
     return serial
 
 
-def _ensure_device(case: str, device: str, serial: str):
+def _ensure_device(case: str, device: str, serial: str, dtype: str = "phone"):
     """Thiết bị vào vụ án khi đóng image; lưu serial để nhận lại đúng máy sau khi rút cáp."""
     old = db.devices.find_one({"case_name": case, "name": device}, {"_id": 0, "serial": 1})
     if old and old.get("serial") and old["serial"] != serial:  # 2 máy cùng tên -> không ghi chung một thư mục
         raise HTTPException(409, f"tên '{device}' đã dùng cho máy khác (serial {old['serial']}) trong vụ án này")
     db.devices.update_one({"case_name": case, "name": device},
-                          {"$set": {"type": "phone", "serial": serial},
+                          {"$set": {"type": dtype, "serial": serial},
                            "$setOnInsert": {"created_at": indexer.now(), "note": None}}, upsert=True)
     if not old:
-        _audit(conn, "device.create", f"{case}/{device}", "phone")
+        _audit(conn, "device.create", f"{case}/{device}", dtype)
 
 
 def _acquire_then_extract(serial: str, case: str, device: str, dest: Path):
@@ -1660,14 +1831,60 @@ def device_image(req: DeviceActionReq):
     case, device = clean_name(req.case), clean_name(req.device)
     _not_extracted(case, device)
     serial = _resolve_serial(req.serial)
-    _ensure_device(case, device, serial)
-    if shutil.disk_usage(DATA).free < MIN_FREE:
-        raise HTTPException(507, "ổ dữ liệu sắp đầy (< 5 GB trống)")
+    disk = _disk_of(serial)
+    if disk and not disk["size"]:
+        raise HTTPException(400, "Khe chưa có thẻ nhớ")
+    need = MIN_FREE + (2 * _disk_used(f"/dev/{disk['block']}", disk["size"]) if disk else 0)  # tệp lấy ra + bản tar
+    if shutil.disk_usage(DATA).free < need:
+        raise HTTPException(507, f"ổ dữ liệu không đủ chỗ (cần {need / 2**30:.0f} GB trống)")
+    _ensure_device(case, device, serial, "hdd" if disk else "phone")
     dest = UPLOADS / case / device
     _claim(case, device, serial)
     threading.Thread(target=_acquire_then_extract, args=(serial, case, device, dest), daemon=True).start()
     _audit(conn, "device.image", f"{case}/{device}")
     return {"status": "started", "serial": serial}
+
+
+class SyncReq(BaseModel):
+    case: str
+    devices: list[str]
+
+
+# Đồng bộ về hệ thống trung tâm (Module 8): mỗi thiết bị gửi bản image (gói tar + manifest SHA-256) + metadata.
+# shortcut: mới có hàng chờ (collection syncs, status pending); chưa gửi thật vì chưa có tài liệu API trung tâm —
+# khi có API: luồng nền đọc syncs pending -> gửi từng khúc -> nhận xác nhận -> status done/error.
+@app.get("/api/sync")
+def sync_list(case: str):
+    """Lần đồng bộ gần nhất của từng thiết bị trong vụ án."""
+    last = {s["device"]: s for s in db.syncs.find({"case_name": clean_name(case)}, {"_id": 0}).sort("id", 1)}
+    return {"items": list(last.values())}
+
+
+@app.post("/api/sync")
+def sync_queue(req: SyncReq):
+    """Đưa các thiết bị đã chọn vào hàng chờ đồng bộ: mỗi máy lấy gói image mới nhất đã xong.
+    Máy chưa đóng image -> skipped; gói (theo SHA-256) đang chờ / đã gửi rồi thì không thêm lần nữa."""
+    case = clean_name(req.case)
+    if not req.devices:
+        raise HTTPException(400, "chưa chọn thiết bị")
+    out = []
+    for device in dict.fromkeys(clean_name(d) for d in req.devices):  # bỏ trùng, giữ thứ tự
+        pkg = db.packages.find_one({"source": str(UPLOADS / case / device), "status": "done"},
+                                   {"_id": 0, "id": 1, "name": 1, "sha256": 1, "size": 1}, sort=[("id", -1)])
+        if not pkg:
+            out.append({"device": device, "status": "skipped", "error": "chưa đóng image"})
+            continue
+        if dup := db.syncs.find_one({"case_name": case, "device": device, "sha256": pkg["sha256"],
+                                     "status": {"$in": ["pending", "sending", "done"]}}, {"_id": 0}):
+            out.append(dup)
+            continue
+        row = {"id": next_id("syncs"), "case_name": case, "device": device, "package_id": pkg["id"],
+               "package_name": pkg["name"], "sha256": pkg["sha256"], "size": pkg.get("size", 0), "status": "pending",
+               "error": None, "created_at": indexer.now(), "finished_at": None}
+        db.syncs.insert_one(dict(row))  # bản sao: insert_one gắn _id (ObjectId) vào dict, không trả JSON được
+        _audit(conn, "sync.queue", f"{case}/{device}", pkg["name"])
+        out.append(row)
+    return {"items": out}
 
 
 @app.post("/api/device/extract")
