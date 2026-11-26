@@ -3,6 +3,8 @@ import { createContext, useContext, useState } from 'react'
 import type { ReactNode } from 'react'
 
 const KEY = 'mf_lang'
+const THEME_KEY = 'mf_theme'
+export type Theme = 'dark' | 'light' | 'normal'
 
 // từ khoá EN -> VI, chỉ cho các chuỗi GIAO DIỆN (label/button/tab/header). Dữ liệu (tên file, tên vụ) không dịch.
 const VI: Record<string, string> = {
@@ -123,20 +125,24 @@ const VI: Record<string, string> = {
 }
 
 // Provider cấp lang + t(). EN là mặc định (trả đúng chuỗi code), VI tra bảng ngược.
-export const I18nContext = createContext<{ lang: string; set: (l: string) => void; t: (k: string) => string }>({
-  lang: 'en', set: () => {}, t: (k) => k,
+export const I18nContext = createContext<{ lang: string; set: (l: string) => void; t: (k: string) => string; theme: Theme; setTheme: (m: Theme) => void }>({
+  lang: 'en', set: () => {}, t: (k) => k, theme: 'dark', setTheme: () => {},
 })
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLang] = useState<string>(() => {
     try { return localStorage.getItem(KEY) || 'en' } catch { return 'en' }
   })
+  const [theme, setThemeState] = useState<Theme>(() => {
+    try { const v = localStorage.getItem(THEME_KEY); return v === 'light' || v === 'normal' ? v : 'dark' } catch { return 'dark' }
+  })
   const set = (l: string) => { setLang(l); try { localStorage.setItem(KEY, l) } catch {} }
+  const setTheme = (m: Theme) => { setThemeState(m); try { localStorage.setItem(THEME_KEY, m) } catch {} }
   const t = (k: string) => (lang === 'vi' ? VI[k] ?? k : k)
-  return <I18nContext.Provider value={{ lang, set, t }}>{children}</I18nContext.Provider>
+  return <I18nContext.Provider value={{ lang, set, t, theme, setTheme }}>{children}</I18nContext.Provider>
 }
 
 export function useI18n() {
-  const { lang, set, t } = useContext(I18nContext)
-  return { lang, setLang: set, t }
+  const { lang, set, t, theme, setTheme } = useContext(I18nContext)
+  return { lang, setLang: set, t, theme, setTheme }
 }

@@ -75,16 +75,16 @@ const DEVICE_LABELS: Record<DeviceType, string> = {
 
 // Loại tệp kiểu màn Lưu trữ Samsung. Màu theo thứ tự cố định (bảng màu đã kiểm mù màu), "Khác" màu trung tính.
 const STORE = [
-  { key: 'chat', label: 'Tin nhắn', color: '#0ea5e9' },
-  { key: 'image', label: 'Hình ảnh', color: '#2a78d6' },
-  { key: 'video', label: 'Video', color: '#eb6834' },
-  { key: 'audio', label: 'Âm thanh', color: '#1baf7a' },
-  { key: 'document', label: 'Tài liệu', color: '#eda100' },
-  { key: 'archive', label: 'Tệp nén', color: '#e87ba4' },
-  { key: 'apk', label: 'Tệp cài đặt', color: '#008300' },
-  { key: 'appdata', label: 'Dữ liệu ứng dụng', color: '#6250d6' },
-  { key: 'system', label: 'Hệ thống', color: '#e34948' },
-  { key: 'other', label: 'Khác', color: '#9ca3af' },
+  { key: 'chat', label: 'Tin nhắn', en: 'Messages', color: '#0ea5e9' },
+  { key: 'image', label: 'Hình ảnh', en: 'Images', color: '#2a78d6' },
+  { key: 'video', label: 'Video', en: 'Videos', color: '#eb6834' },
+  { key: 'audio', label: 'Âm thanh', en: 'Audio', color: '#1baf7a' },
+  { key: 'document', label: 'Tài liệu', en: 'Documents', color: '#eda100' },
+  { key: 'archive', label: 'Tệp nén', en: 'Archives', color: '#e87ba4' },
+  { key: 'apk', label: 'Tệp cài đặt', en: 'Installers', color: '#008300' },
+  { key: 'appdata', label: 'Dữ liệu ứng dụng', en: 'App Data', color: '#6250d6' },
+  { key: 'system', label: 'Hệ thống', en: 'System', color: '#e34948' },
+  { key: 'other', label: 'Khác', en: 'Other', color: '#9ca3af' },
 ] as const
 type StoreKey = (typeof STORE)[number]['key']
 // Tệp của app đồng bộ cloud trên máy (Mi Cloud, iCloud Drive, Google Drive/Photos, Dropbox, OneDrive). Khớp _CLOUD_SQL ở main.py
@@ -161,7 +161,9 @@ export default function CaseDetail() {
   // Danh sách vụ án để chọn đổi dự án (app giờ chỉ có 1 trang Magnet).
   const [caseList, setCaseList] = useState<{ name: string }[]>([])
   const navigate = useNavigate()
-  const { t } = useI18n()
+  const { lang, t, theme, setTheme } = useI18n()
+  const isVi = lang === 'vi'
+  const L = (vi: string, en: string) => (isVi ? vi : en)
   useEffect(() => {
     api.cases().then((cs) => setCaseList(cs)).catch(() => {})
   }, [])
@@ -709,7 +711,7 @@ export default function CaseDetail() {
   }, [chatTid, viewMode])
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#f0f3f6] text-[#1c2d42] font-sans overflow-hidden select-none">
+    <div className={`${theme === 'dark' ? 'case-hud ' : theme === 'light' ? 'case-hud-light ' : ''}flex flex-col h-screen w-screen bg-[#f0f3f6] text-[#1c2d42] font-sans overflow-hidden select-none`}>
       {/* =========================================================================
           ROW 1: MAGNET AXIOM TOP BAR
           ========================================================================= */}
@@ -720,8 +722,8 @@ export default function CaseDetail() {
             <button
               type="button"
               onClick={() => navigate('/')}
-              title="Quay lại danh sách thiết bị"
-              aria-label="Quay lại danh sách thiết bị"
+              title={L("Quay lại danh sách thiết bị", "Back to devices")}
+              aria-label={L("Quay lại danh sách thiết bị", "Back to devices")}
               className="inline-flex items-center gap-1 rounded bg-white/10 hover:bg-[#0077cc] text-white px-1.5 py-1 text-[11px] font-medium cursor-pointer transition-colors"
             >
               <ChevronLeft size={14} aria-hidden="true" />
@@ -780,6 +782,16 @@ export default function CaseDetail() {
                 {live.n > 0 ? `${t('Connected')}: ${live.n}${live.bad ? ` · ${live.bad} ${t('errors')}` : ''}` : t('No connection')}
               </span>
             </button>
+            <select
+              value={theme}
+              onChange={e => setTheme(e.target.value as 'dark' | 'light' | 'normal')}
+              aria-label={L('Giao diện', 'Theme')}
+              className="rounded bg-white/10 hover:bg-white/20 text-white px-2 py-1 text-xs font-medium cursor-pointer outline-none [&>option]:text-navy"
+            >
+              <option value="dark">{L('Tối', 'Dark')}</option>
+              <option value="light">{L('Sáng', 'Light')}</option>
+              <option value="normal">{L('Thường', 'Normal')}</option>
+            </select>
             <button
               type="button"
               onClick={() => { logout(); navigate('/login') }}
@@ -813,20 +825,20 @@ export default function CaseDetail() {
                 <option value="chat">{t('Messages & Chats (CHAT)')}</option>
                 <option value="call">{t('Call logs (CALLS)')}</option>
                 <option value="contact">{t('Contacts (CONTACTS)')}</option>
-                {STORE.map((s) => <option key={s.key} value={`store:${s.key}`}>Tệp: {s.label}</option>)}
+                {STORE.map((s) => <option key={s.key} value={`store:${s.key}`}>{L('Tệp:', 'File:')} {isVi ? s.label : s.en}</option>)}
               </select>
               <ChevronDown size={11} className="pointer-events-none absolute right-1.5 text-slate-300" />
             </div>
 
             {/* Bộ lọc Date & Tags */}
-            <span className="inline-flex items-center gap-1 text-[11px] font-bold tracking-wider text-slate-300">Từ</span>
+            <span className="inline-flex items-center gap-1 text-[11px] font-bold tracking-wider text-slate-300">{L("Từ", "From")}</span>
             <input
               type="date"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
               className="h-6 rounded bg-[#0c223c] text-white border border-white/20 px-1.5 text-[11px] cursor-pointer focus:outline-none focus:border-[#00b8ff]"
             />
-            <span className="inline-flex items-center gap-1 text-[11px] font-bold tracking-wider text-slate-300">Đến</span>
+            <span className="inline-flex items-center gap-1 text-[11px] font-bold tracking-wider text-slate-300">{L("Đến", "To")}</span>
             <input
               type="date"
               value={dateTo}
@@ -846,10 +858,10 @@ export default function CaseDetail() {
                     setSelectedSubCategory('all')
                   }
                 }}
-                title="Lọc ảnh/video theo đối tượng nhận diện (tag AI, chữ OCR, GPS)"
+                title={L("Lọc ảnh/video theo đối tượng nhận diện (tag AI, chữ OCR, GPS)", "Filter photos/videos by detected object (AI tag, OCR, GPS)")}
                 className="h-6 rounded bg-[#0c223c] text-white border border-white/20 px-2 pr-6 text-[11px] appearance-none cursor-pointer focus:outline-none focus:border-[#00b8ff]"
               >
-                <option value="all">Đối tượng: Tất cả ({objCounts.all || 0})</option>
+                <option value="all">{L("Đối tượng: Tất cả", "Objects: All")} ({objCounts.all || 0})</option>
                 {OBJ.map((o) => (
                   <option key={o.key} value={o.key}>{o.label} ({objCounts[o.key] || 0})</option>
                 ))}
@@ -900,7 +912,7 @@ export default function CaseDetail() {
       {/* Thông báo lỗi nếu có */}
       {err && (
         <div className="bg-red-50 text-red-600 px-4 py-1 text-xs border-b border-red-200">
-          Lỗi: {err}
+          {L('Lỗi:', 'Error:')} {err}
         </div>
       )}
 
@@ -957,10 +969,10 @@ export default function CaseDetail() {
             {/* Lưu trữ kiểu Samsung: tổng dung lượng, thanh nhiều màu, danh sách loại tệp (bấm để lọc) */}
             <div className="pt-2 pb-1">
               <div className="px-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 truncate">
-                Lưu trữ{activeDevice ? ` · ${activeDevice}` : ''}
+                {L('Lưu trữ', 'Storage')}{activeDevice ? ` · ${activeDevice}` : ''}
               </div>
               <div className="px-2.5 pt-1 text-sm font-semibold text-[#0a1f44]">
-                {fmtSize(storeStats.size)} <span className="text-[11px] font-normal text-slate-500">· {storeStats.n} tệp</span>
+                {fmtSize(storeStats.size)} <span className="text-[11px] font-normal text-slate-500">· {storeStats.n} {L('tệp', 'files')}</span>
               </div>
               <div
                 className="mx-2.5 mt-1.5 mb-1.5 flex h-2 gap-0.5 overflow-hidden rounded bg-slate-200"
@@ -977,7 +989,7 @@ export default function CaseDetail() {
                 ))}
               </div>
               <div role="radiogroup" aria-label="Kiểu hiển thị" className="flex gap-3 px-2.5 pb-1 text-[11px] text-slate-600">
-                {([['cloud', 'Cloud'], ['list', 'Bình thường']] as const).map(([v, label]) => (
+                {([['cloud', 'Cloud'], ['list', L('Bình thường', 'Normal')]] as const).map(([v, label]) => (
                   <label key={v} className="flex items-center gap-1 cursor-pointer">
                     <input type="radio" name="storeView" checked={storeView === v} onChange={() => setStoreView(v)} className="accent-[#0078d4]" />
                     {label}
@@ -1036,7 +1048,7 @@ export default function CaseDetail() {
               })}
             </div>
 
-            <div className="px-2.5 pt-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Bản ghi trích xuất</div>
+            <div className="px-2.5 pt-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">{L("Bản ghi trích xuất", "Extracted Records")}</div>
 
             {/* Mục: CHAT & MESSAGES */}
             <div className="pt-0.5">
@@ -1211,7 +1223,7 @@ export default function CaseDetail() {
               <span className="text-slate-500">({shownTotal})</span>
               {activeSearch && (
                 <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[11px] font-medium">
-                  Lọc: "{activeSearch}"
+                  {L("Lọc:", "Filter:")} "{activeSearch}"
                 </span>
               )}
             </div>
@@ -1249,7 +1261,7 @@ export default function CaseDetail() {
                       }}
                       className={`cursor-pointer rounded-full border px-2.5 py-0.5 transition-colors ${on ? 'border-[#0068ff] bg-[#0068ff] text-white' : 'border-slate-200 text-slate-600 hover:bg-slate-100'}`}
                     >
-                      {s.key === 'chat' ? 'Hội thoại' : s.label} <span className="tabular-nums opacity-75">{ap.by[s.key][0]}</span>
+                      {s.key === 'chat' ? L('Hội thoại', 'Chats') : (isVi ? s.label : s.en)} <span className="tabular-nums opacity-75">{ap.by[s.key][0]}</span>
                     </button>
                   )
                 })}
@@ -1263,11 +1275,11 @@ export default function CaseDetail() {
               <div className="p-12 text-center text-xs text-slate-400">{t('Loading case data...')}</div>
             ) : filteredArtifacts.length === 0 ? (
               <div className="p-12 text-center text-slate-400 text-xs">
-                Không tìm thấy bản ghi chứng cứ nào phù hợp với bộ lọc hiện tại.
+                {L('Không tìm thấy bản ghi chứng cứ nào phù hợp với bộ lọc hiện tại.', 'No evidence records match the current filter.')}
               </div>
             ) : viewMode === 'grid' ? (
               gridItems.length === 0 ? (
-                <div className="p-12 text-center text-slate-400 text-xs">Không có ảnh/video nào trong bộ lọc hiện tại.</div>
+                <div className="p-12 text-center text-slate-400 text-xs">{L("Không có ảnh/video nào trong bộ lọc hiện tại.", "No photos or videos match the current filter.")}</div>
               ) : (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(110px,1fr))] gap-0.5 p-0.5">
                   {gridItems.map((item) => (
@@ -1296,7 +1308,7 @@ export default function CaseDetail() {
                 {/* Danh sách hội thoại */}
                 <div className="w-64 shrink-0 border-r border-[#d3dbe3] bg-[#fbfcfd] overflow-y-auto p-1.5 space-y-1">
                   <div className="px-2 py-1 text-[10.5px] font-bold text-slate-400 uppercase tracking-wider">
-                    HỘI THOÁI & LIÊN LẠC
+                    {L('HỘI THOÁI & LIÊN LẠC', 'CONVERSATIONS & CONTACTS')}
                   </div>
                   {conversationThreads.map((th) => {
                     const isThreadActive =
@@ -1346,8 +1358,8 @@ export default function CaseDetail() {
                       {initials(chatTid || '?')}
                     </div>
                     <div className="min-w-0">
-                      <h3 className="truncate text-[13px] font-semibold text-slate-800">{chatTid || 'Chọn một hội thoại'}</h3>
-                      <p className="text-[10.5px] text-slate-500">{chatMsgs.length.toLocaleString('vi')} tin nhắn</p>
+                      <h3 className="truncate text-[13px] font-semibold text-slate-800">{chatTid || L('Chọn một hội thoại', 'Select a conversation')}</h3>
+                      <p className="text-[10.5px] text-slate-500">{chatMsgs.length.toLocaleString(isVi ? 'vi' : 'en')} {L('tin nhắn', 'messages')}</p>
                     </div>
                   </div>
                   <div className="flex-1 overflow-y-auto px-4 py-3">
@@ -1366,7 +1378,7 @@ export default function CaseDetail() {
                     {chatView.length > chatShow && (
                       <div className="mb-2 text-center">
                         <button type="button" onClick={() => setChatShow((n) => n + 500)} className="cursor-pointer rounded-full bg-white/80 px-3 py-1 text-[11px] text-[#0068ff] shadow-xs hover:bg-white">
-                          Xem tin cũ hơn ({(chatView.length - chatShow).toLocaleString('vi')})
+                          {L('Xem tin cũ hơn', 'Load older')} ({(chatView.length - chatShow).toLocaleString(isVi ? 'vi' : 'en')})
                         </button>
                       </div>
                     )}
@@ -1513,7 +1525,7 @@ export default function CaseDetail() {
                 onClick={() => loadSrv(srv.page + 1)}
                 className="mx-auto my-2 block rounded border border-[#d3dbe3] bg-white px-3 py-1 text-[11px] text-[#0a1f44] cursor-pointer hover:bg-[#e8eef3] disabled:cursor-wait disabled:opacity-60"
               >
-                {srvBusy ? 'Đang tải…' : `Tải thêm (${srv.items.length} / ${srv.total})`}
+                {srvBusy ? L('Đang tải…', 'Loading…') : `${L('Tải thêm', 'Load more')} (${srv.items.length} / ${srv.total})`}
               </button>
             )}
           </div>
@@ -1549,7 +1561,7 @@ export default function CaseDetail() {
                 type="button"
                 onClick={() => {
                   const fid = selectedArtifact!.raw!.id
-                  if (!window.confirm('Xoá tài liệu này khỏi vụ án?')) return
+                  if (!window.confirm(L('Xoá tài liệu này khỏi vụ án?', 'Delete this file from case?'))) return
                   api
                     .deleteFile(name, fid)
                     .then(() => loadData())
@@ -1557,7 +1569,7 @@ export default function CaseDetail() {
                 }}
                 className="ml-1 px-2 py-0.5 rounded bg-white text-red-600 border border-red-200 text-[11px] font-medium hover:bg-red-50 cursor-pointer"
               >
-                <Trash2 size={11} className="inline mr-0.5" /> Xoá
+                <Trash2 size={11} className="inline mr-0.5" /> {L("Xoá", "Delete")}
               </button>
             )}
           </div>
@@ -1622,7 +1634,7 @@ export default function CaseDetail() {
                         rel="noreferrer"
                         className="mt-2 text-xs text-[#0078d4] hover:underline"
                       >
-                        Mở tệp ảnh gốc
+                        {L('Mở tệp ảnh gốc', 'Open original image')}
                       </a>
                     </div>
                   ) : (
@@ -1631,7 +1643,7 @@ export default function CaseDetail() {
                         {fullText || selectedArtifact.content || 'No text preview available.'}
                       </p>
                       {fullText.length >= 50000 && (
-                        <p className="mt-1 text-[11px] text-slate-500">Chỉ hiện 50.000 ký tự đầu của tệp. Mở tệp gốc để xem toàn bộ.</p>
+                        <p className="mt-1 text-[11px] text-slate-500">{L('Chỉ hiện 50.000 ký tự đầu của tệp. Mở tệp gốc để xem toàn bộ.', 'Showing first 50,000 characters. Open original file to view all.')}</p>
                       )}
                     </div>
                   )}
@@ -1677,7 +1689,7 @@ export default function CaseDetail() {
               </>
             ) : (
               <div className="p-8 text-center text-xs text-slate-400">
-                Chọn 1 bản ghi chứng cứ để xem chi tiết
+                {L('Chọn 1 bản ghi chứng cứ để xem chi tiết', 'Select an evidence record to view details')}
               </div>
             )}
           </div>
@@ -1688,7 +1700,7 @@ export default function CaseDetail() {
             ===================================================================== */}
         <div
           onClick={() => setShowTagsDrawer(!showTagsDrawer)}
-          title="Mở bảng Gắn thẻ & Ghi chú nghiệp vụ"
+          title={L("Mở bảng Gắn thẻ & Ghi chú nghiệp vụ", "Open Tags & Investigator Notes")}
           className="w-7 shrink-0 bg-[#e3e9ef] hover:bg-[#d5dfe8] border-l border-[#ccd5de] flex flex-col items-center py-4 select-none cursor-pointer transition-colors"
         >
           <div className="rotate-90 origin-center whitespace-nowrap text-[10px] font-bold tracking-widest text-slate-500 uppercase mt-16 flex items-center gap-1.5">
@@ -1807,7 +1819,7 @@ export default function CaseDetail() {
                   }}
                   className="mt-1.5 w-full py-1 bg-[#0077cc] hover:bg-[#0063ad] text-white rounded text-[11px] font-medium transition-colors cursor-pointer"
                 >
-                  Lưu ghi chú chứng cứ
+                  {L('Lưu ghi chú chứng cứ', 'Save Evidence Note')}
                 </button>
               </div>
 
@@ -2039,7 +2051,9 @@ export function GraphView({ name, all = false }: { name: string; all?: boolean }
 // MODAL THU THẬP DỮ LIỆU ĐIỆN THOẠI USB / ADB
 // -------------------------------------------------------------
 function CollectModal({ name, onClose }: { name: string; onClose: () => void }) {
-  const { t } = useI18n()
+  const { lang, t } = useI18n()
+  const isVi = lang === 'vi'
+  const L = (vi: string, en: string) => (isVi ? vi : en)
   const [type, setType] = useState<DeviceType>('phone')
   const [dn, setDn] = useState('')
   const [usb, setUsb] = useState<{
@@ -2124,7 +2138,7 @@ function CollectModal({ name, onClose }: { name: string; onClose: () => void }) 
         <div className="flex h-11 items-center justify-between bg-[#0a1f44] text-white px-4">
           <span className="font-bold text-xs flex items-center gap-2 text-[#00b8ff]">
             <Smartphone size={14} />
-            Thu thập dữ liệu USB / ADB
+            {L('Thu thập dữ liệu USB / ADB', 'Collect USB / ADB Data')}
           </span>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-white cursor-pointer">
             <X size={16} />
@@ -2371,10 +2385,12 @@ function UploadModal({
   devices: Device[]
   onClose: () => void
 }) {
+  const { lang, t } = useI18n()
+  const isVi = lang === 'vi'
+  const L = (vi: string, en: string) => (isVi ? vi : en)
   const [fileList, setFileList] = useState<FileList | null>(null)
   const [targetDevice, setTargetDevice] = useState(devices[0]?.name || '')
   const [busy, setBusy] = useState(false)
-  const { t } = useI18n()
   const [err, setErr] = useState('')
 
   const handleUpload = async (e: FormEvent) => {
@@ -2399,7 +2415,7 @@ function UploadModal({
         <div className="flex h-11 items-center justify-between bg-[#0a1f44] text-white px-4">
           <span className="font-bold text-xs flex items-center gap-2 text-[#00bcd4]">
             <Upload size={14} />
-            Tải lên tài liệu chứng cứ
+            {L('Tải lên tài liệu chứng cứ', 'Upload Evidence Files')}
           </span>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-white cursor-pointer">
             <X size={16} />
@@ -2465,7 +2481,9 @@ function UploadModal({
 // MODAL ĐÓNG GÓI & XUẤT BÁO CÁO CHỨNG CỨ
 // -------------------------------------------------------------
 function PackageModal({ name, onClose }: { name: string; onClose: () => void }) {
-  const { t } = useI18n()
+  const { lang, t } = useI18n()
+  const isVi = lang === 'vi'
+  const L = (vi: string, en: string) => (isVi ? vi : en)
   const [pkgs, setPkgs] = useState<PackageItem[]>([])
   const [busy, setBusy] = useState(false)
   const [desc, setDesc] = useState('')
@@ -2499,7 +2517,7 @@ function PackageModal({ name, onClose }: { name: string; onClose: () => void }) 
         <div className="flex h-11 items-center justify-between bg-[#0a1f44] text-white px-4">
           <span className="font-bold text-xs flex items-center gap-2 text-[#00bcd4]">
             <Archive size={14} />
-            Đóng gói & Báo cáo hồ sơ chứng cứ vụ án
+            {L('Đóng gói & Báo cáo hồ sơ chứng cứ vụ án', 'Package & Report Case Evidence')}
           </span>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-white cursor-pointer">
             <X size={16} />
@@ -2579,7 +2597,9 @@ function DeviceMgrModal({
   const [newDevName, setNewDevName] = useState('')
   const [newDevType, setNewDevType] = useState<DeviceType>('phone')
   const [busy, setBusy] = useState(false)
-  const { t } = useI18n()
+  const { lang, t } = useI18n()
+  const isVi = lang === 'vi'
+  const L = (vi: string, en: string) => (isVi ? vi : en)
 
   const addDevice = async (e: FormEvent) => {
     e.preventDefault()
@@ -2611,7 +2631,7 @@ function DeviceMgrModal({
         <div className="flex h-11 items-center justify-between bg-[#0a1f44] text-white px-4">
           <span className="font-bold text-xs flex items-center gap-2 text-[#00bcd4]">
             <HardDrive size={14} />
-            Quản lý thiết bị thu giữ trong vụ án
+            {L('Quản lý thiết bị thu giữ trong vụ án', 'Manage Seized Devices in Case')}
           </span>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-white cursor-pointer">
             <X size={16} />

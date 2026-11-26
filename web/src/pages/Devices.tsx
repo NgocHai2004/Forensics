@@ -31,31 +31,31 @@ type Card = { name: string; serial: string | null; usb?: Usb; dev?: Device }
 
 const STAGE_CONFIG: Record<
   Stage,
-  { label: string; btn: string; borderCls: string }
+  { label: string; enLabel: string; btn: string; enBtn: string; borderCls: string }
 > = {
   // màu vạch trái của thẻ thay cho nhãn (viền ngoài để xám nhạt): vàng = đã có image, xanh dương = đang chạy, xanh lá = xong, đỏ = lỗi
-  new: { label: 'Chưa đóng image', btn: 'Đóng image & Hash SHA-256', borderCls: 'border-l-line' },
-  imaging: { label: 'Đang đóng image…', btn: 'Đang đóng image…', borderCls: 'border-l-blue-500' },
-  imaged: { label: 'Đã có image + hash', btn: 'Bắt đầu trích xuất', borderCls: 'border-l-amber-400' },
-  partial: { label: 'Trích xuất dở (bị ngắt)', btn: 'Tiếp tục trích xuất', borderCls: 'border-l-amber-400' },
-  extracting: { label: 'Đang trích xuất…', btn: 'Đang trích xuất…', borderCls: 'border-l-blue-500' },
-  done: { label: 'Trích xuất hoàn tất', btn: 'Xem chứng cứ vụ án', borderCls: 'border-l-emerald-500' },
-  error: { label: 'Lỗi trích xuất', btn: 'Trích xuất lại', borderCls: 'border-l-rose-500' },
+  new: { label: 'Chưa đóng image', enLabel: 'Not imaged yet', btn: 'Đóng image & Hash SHA-256', enBtn: 'Create Image & SHA-256', borderCls: 'border-l-line' },
+  imaging: { label: 'Đang đóng image…', enLabel: 'Creating image…', btn: 'Đang đóng image…', enBtn: 'Creating image…', borderCls: 'border-l-blue-500' },
+  imaged: { label: 'Đã có image + hash', enLabel: 'Imaged + hashed', btn: 'Bắt đầu trích xuất', enBtn: 'Start Extraction', borderCls: 'border-l-amber-400' },
+  partial: { label: 'Trích xuất dở (bị ngắt)', enLabel: 'Partial extraction', btn: 'Tiếp tục trích xuất', enBtn: 'Resume Extraction', borderCls: 'border-l-amber-400' },
+  extracting: { label: 'Đang trích xuất…', enLabel: 'Extracting…', btn: 'Đang trích xuất…', enBtn: 'Extracting…', borderCls: 'border-l-blue-500' },
+  done: { label: 'Trích xuất hoàn tất', enLabel: 'Extraction complete', btn: 'Xem chứng cứ vụ án', enBtn: 'View Case Evidence', borderCls: 'border-l-emerald-500' },
+  error: { label: 'Lỗi trích xuất', enLabel: 'Extraction error', btn: 'Trích xuất lại', enBtn: 'Retry Extraction', borderCls: 'border-l-rose-500' },
 }
 
 const CASE_KEY = 'mf_case'
 // loại tệp cho dashboard: cùng key/màu với STORE ở CaseDetail.tsx và _STORE_SQL ở main.py
 const FILE_TYPES = [
-  { key: 'image', label: 'Hình ảnh', color: '#2a78d6' },
-  { key: 'video', label: 'Video', color: '#eb6834' },
-  { key: 'audio', label: 'Âm thanh', color: '#1baf7a' },
-  { key: 'document', label: 'Tài liệu', color: '#eda100' },
-  { key: 'chat', label: 'Tin nhắn', color: '#0ea5e9' },
-  { key: 'archive', label: 'Tệp nén', color: '#e87ba4' },
-  { key: 'apk', label: 'Tệp cài đặt', color: '#008300' },
-  { key: 'appdata', label: 'Dữ liệu ứng dụng', color: '#6250d6' },
-  { key: 'system', label: 'Hệ thống', color: '#e34948' },
-  { key: 'other', label: 'Khác', color: '#9ca3af' },
+  { key: 'image', label: 'Hình ảnh', en: 'Images', color: '#2a78d6' },
+  { key: 'video', label: 'Video', en: 'Videos', color: '#eb6834' },
+  { key: 'audio', label: 'Âm thanh', en: 'Audio', color: '#1baf7a' },
+  { key: 'document', label: 'Tài liệu', en: 'Documents', color: '#eda100' },
+  { key: 'chat', label: 'Tin nhắn', en: 'Messages', color: '#0ea5e9' },
+  { key: 'archive', label: 'Tệp nén', en: 'Archives', color: '#e87ba4' },
+  { key: 'apk', label: 'Tệp cài đặt', en: 'Installers', color: '#008300' },
+  { key: 'appdata', label: 'Dữ liệu ứng dụng', en: 'App Data', color: '#6250d6' },
+  { key: 'system', label: 'Hệ thống', en: 'System', color: '#e34948' },
+  { key: 'other', label: 'Khác', en: 'Other', color: '#9ca3af' },
 ]
 const FIELD = 'h-10 w-full rounded-lg border border-line bg-card px-3 text-sm text-ink placeholder:text-muted focus:border-primary focus:outline-none'
 const BTN = 'inline-flex min-h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-white transition-colors duration-150 hover:bg-primary-hover disabled:opacity-50'
@@ -105,7 +105,9 @@ function IconBtn({ label, tip, disabled, onClick, children }: {
 
 export default function Devices() {
   const navigate = useNavigate()
-  const { t } = useI18n()
+  const { lang, t, theme, setTheme } = useI18n()
+  const isVi = lang === 'vi'
+  const L = (vi: string, en: string) => (isVi ? vi : en)
   const [cases, setCases] = useState<Case[] | null>(null)
   const [caseName, setCaseName] = useState('')
   const [usb, setUsb] = useState<Usb[]>([])
@@ -193,8 +195,8 @@ export default function Devices() {
       setSyncs(m => ({ ...m, ...byDevice(r.items) }))
       setSyncSel(new Set())
       const queued = r.items.filter(s => s.status !== 'skipped').length
-      setSyncMsg(`Đã đưa ${queued} thiết bị vào hàng chờ đồng bộ`
-        + (queued < r.items.length ? `; bỏ qua ${r.items.length - queued} máy chưa đóng image` : ''))
+      setSyncMsg(L(`Đã đưa ${queued} thiết bị vào hàng chờ đồng bộ`, `Queued ${queued} device(s) for sync`)
+        + (queued < r.items.length ? L(`; bỏ qua ${r.items.length - queued} máy chưa đóng image`, `; skipped ${r.items.length - queued} unimaged device(s)`) : ''))
     } catch (e) {
       setSyncMsg((e as Error).message)
     } finally {
@@ -204,7 +206,7 @@ export default function Devices() {
 
   const create = async (e: FormEvent) => {
     e.preventDefault()
-    if (!newName.trim()) { setCreateErr('Nhập tên vụ án'); return }
+    if (!newName.trim()) { setCreateErr(L('Nhập tên vụ án', 'Enter case name')); return }
     setBusyCreating(true)
     setCreateErr('')
     try {
@@ -213,7 +215,7 @@ export default function Devices() {
       pickCase(c.name)
       dlg.current?.close()
     } catch (e) {
-      setCreateErr(e instanceof ApiError ? e.message : 'Không gọi được máy chủ')
+      setCreateErr(e instanceof ApiError ? e.message : L('Không gọi được máy chủ', 'Cannot reach server'))
     } finally {
       setBusyCreating(false)
     }
@@ -334,7 +336,7 @@ export default function Devices() {
   }
 
   return (
-    <div className="app-bg h-dvh w-full text-ink flex flex-col">
+    <div className={`${theme === 'dark' ? 'app-bg' : theme === 'light' ? 'app-bg-light' : 'bg-canvas'} h-dvh w-full text-ink flex flex-col`}>
       {/* Header: cùng kiểu thanh menu trang chứng cứ (CaseDetail ROW 1) */}
       <header className="sticky top-0 z-30 shrink-0 bg-[#0a1f44] text-white border-b border-[#081833]">
         <div className="flex h-11 items-center justify-between px-3">
@@ -342,10 +344,10 @@ export default function Devices() {
             <select
               value={caseName}
               onChange={e => pickCase(e.target.value)}
-              title="Chọn vụ án / dự án"
+              title={L("Chọn vụ án / dự án", "Select case / project")}
               className="inline-flex items-center max-w-[220px] rounded bg-white/10 hover:bg-white/20 text-white px-2 py-1 text-xs font-medium transition-colors cursor-pointer outline-none [&>option]:text-navy"
             >
-              {!cases?.length && <option value="">Chưa có vụ án</option>}
+              {!cases?.length && <option value="">{L("Chưa có vụ án", "No cases yet")}</option>}
               {cases?.map(c => (
                 <option key={c.name} value={c.name}>{c.name}</option>
               ))}
@@ -353,7 +355,7 @@ export default function Devices() {
             <button
               type="button"
               onClick={openCreate}
-              title="Tạo vụ án mới"
+              title={L("Tạo vụ án mới", "Create new case")}
               className="inline-flex items-center gap-1 rounded bg-white/10 hover:bg-[#0077cc] text-white px-1.5 py-1 text-[11px] font-medium cursor-pointer transition-colors"
             >
               <Plus size={13} />
@@ -362,7 +364,7 @@ export default function Devices() {
             <div className="flex items-center gap-2 truncate">
               <span className="text-xs font-bold uppercase tracking-wider text-[#00b8ff]">{t('FORENSIC INVESTIGATION')}</span>
               <span className="text-xs text-slate-400">&bull;</span>
-              <span className="text-sm font-bold text-white truncate" title={caseName}>{caseName || 'Chưa chọn vụ án'}</span>
+              <span className="text-sm font-bold text-white truncate" title={caseName}>{caseName || L('Chưa chọn vụ án', 'No case selected')}</span>
             </div>
           </div>
 
@@ -374,7 +376,7 @@ export default function Devices() {
               className="inline-flex items-center gap-1.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-40 text-white px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer"
             >
               <RefreshCw size={13} aria-hidden="true" />
-              <span>Đồng bộ</span>
+              <span>{L('Đồng bộ', 'Sync')}</span>
             </button>
             <button
               type="button"
@@ -383,19 +385,29 @@ export default function Devices() {
               className="inline-flex items-center gap-1.5 rounded bg-[#0077cc] hover:bg-[#0063ad] disabled:opacity-40 text-white px-2.5 py-1 text-xs font-medium transition-all shadow-xs cursor-pointer"
             >
               <Files size={13} />
-              <span>Xem chứng cứ tổng</span>
+              <span>{L('Xem chứng cứ tổng', 'View All Evidence')}</span>
             </button>
             <span className="inline-flex items-center gap-1.5 rounded bg-white/10 text-white px-2.5 py-1 text-xs font-medium">
               <HardDrive size={13} />
-              <span>Thiết bị ({cards.length})</span>
+              <span>{L('Thiết bị', 'Devices')} ({cards.length})</span>
               <span
                 className={`ml-0.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${usb.length ? 'bg-[#00b8ff]/20 text-[#00b8ff]' : 'bg-white/10 text-slate-400'}`}
                 title="Devices connected"
               >
                 <span className={`h-1.5 w-1.5 rounded-full ${usb.length ? 'bg-[#00b8ff]' : 'bg-slate-400'}`} aria-hidden="true" />
-                {usb.length > 0 ? `Kết nối: ${usb.length}` : 'Không kết nối'}
+                {usb.length > 0 ? `${L('Kết nối', 'Connected')}: ${usb.length}` : L('Không kết nối', 'No connection')}
               </span>
             </span>
+            <select
+              value={theme}
+              onChange={e => setTheme(e.target.value as 'dark' | 'light' | 'normal')}
+              aria-label={L('Giao diện', 'Theme')}
+              className="rounded bg-white/10 hover:bg-white/20 text-white px-2 py-1 text-xs font-medium cursor-pointer outline-none [&>option]:text-navy"
+            >
+              <option value="dark">{L('Tối', 'Dark')}</option>
+              <option value="light">{L('Sáng', 'Light')}</option>
+              <option value="normal">{L('Thường', 'Normal')}</option>
+            </select>
             <button
               type="button"
               onClick={() => { logout(); navigate('/login') }}
@@ -403,7 +415,7 @@ export default function Devices() {
               className="inline-flex items-center gap-1.5 rounded bg-white/10 hover:bg-red-500/20 text-white px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer ml-1"
             >
               <LogOut size={13} />
-              <span>Đăng xuất</span>
+              <span>{L('Đăng xuất', 'Sign out')}</span>
             </button>
           </div>
         </div>
@@ -414,26 +426,26 @@ export default function Devices() {
       <main className="flex w-full min-h-0 flex-1 flex-col overflow-y-auto px-4 sm:px-6 lg:px-8 py-3">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="font-display text-lg font-bold text-white flex items-center gap-2">
-              Thống kê
+            <h2 className={`font-display text-lg font-bold flex items-center gap-2 ${theme === 'dark' ? 'text-white' : 'text-navy'}`}>
+              {L('Thống kê', 'Statistics')}
             </h2>
           </div>
 
-          <div className="flex items-center gap-2 text-xs text-slate-300">
+          <div className={`flex items-center gap-2 text-xs ${theme === 'dark' ? 'text-slate-300' : 'text-muted'}`}>
             <span className="inline-flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-emerald-500" /> Đang kết nối cáp USB
+              <span className="h-2 w-2 rounded-full bg-emerald-500" /> {L('Đang kết nối cáp USB', 'USB Connected')}
             </span>
             <span className="inline-flex items-center gap-1 ml-2">
-              <span className="h-2 w-2 rounded-full bg-slate-400" /> Đã rút cáp / Lưu trữ ngoại tuyến
+              <span className="h-2 w-2 rounded-full bg-slate-400" /> {L('Đã rút cáp / Lưu trữ ngoại tuyến', 'Disconnected / Offline')}
             </span>
           </div>
         </div>
 
         {cases?.length === 0 && (
           <div className="card mb-5 flex items-center justify-between gap-3 p-4 text-sm text-muted border-amber-200 bg-amber-50">
-            <span>Chưa có hồ sơ vụ án nào. Hãy tạo vụ án để bắt đầu quản lý và thu thập thiết bị.</span>
+            <span>{L('Chưa có hồ sơ vụ án nào. Hãy tạo vụ án để bắt đầu quản lý và thu thập thiết bị.', 'No case records yet. Create a case to start managing and acquiring devices.')}</span>
             <button type="button" onClick={openCreate} className={BTN}>
-              <FolderPlus className="h-4 w-4" aria-hidden="true" /> Tạo vụ án
+              <FolderPlus className="h-4 w-4" aria-hidden="true" /> {L("Tạo vụ án", "Create Case")}
             </button>
           </div>
         )}
@@ -448,7 +460,7 @@ export default function Devices() {
         {!cards.length && (
           <div className="card mb-4 p-10 text-center text-muted border-dashed border-2">
             <Smartphone className="mx-auto h-12 w-12 text-muted/40 mb-3" />
-            <p className="font-medium text-ink">Chưa có thiết bị nào trong vụ án</p>
+            <p className="font-medium text-ink">{L("Chưa có thiết bị nào trong vụ án", "No devices in this case yet")}</p>
             <p className="text-xs text-muted mt-1 max-w-md mx-auto">
               Kết nối điện thoại vào cổng USB của hệ thống, bật chế độ Gỡ lỗi USB (USB Debugging) hoặc tin cậy máy tính (với iOS), hệ thống sẽ tự đóng image (SHA-256) và trích xuất.
             </p>
@@ -466,11 +478,11 @@ export default function Devices() {
           const totalSize = fstat?.size ?? devs.reduce((s, d) => s + (d.size ?? 0), 0)
           // 1) vòng tròn: thiết bị theo trạng thái (cùng màu viền thẻ)
           const status = [
-            { label: 'Đã trích xuất', color: '#10b981', n: all.filter(x => !x.st?.error && x.stage === 'done').length },
-            { label: 'Đã có image', color: '#fbbf24', n: all.filter(x => !x.st?.error && (x.stage === 'imaged' || x.stage === 'partial')).length },
-            { label: 'Đang xử lý', color: '#3b82f6', n: all.filter(x => !x.st?.error && (x.stage === 'imaging' || x.stage === 'extracting')).length },
-            { label: 'Lỗi', color: '#f43f5e', n: all.filter(x => x.st?.error || x.stage === 'error').length },
-            { label: 'Chưa đóng image', color: '#cbd5e1', n: all.filter(x => !x.st?.error && x.stage === 'new').length },
+            { label: L('Đã trích xuất', 'Extracted'), color: '#00b8ff', n: all.filter(x => !x.st?.error && x.stage === 'done').length },
+            { label: L('Đã có image', 'Imaged'), color: '#fbbf24', n: all.filter(x => !x.st?.error && (x.stage === 'imaged' || x.stage === 'partial')).length },
+            { label: L('Đang xử lý', 'Processing'), color: '#3b82f6', n: all.filter(x => !x.st?.error && (x.stage === 'imaging' || x.stage === 'extracting')).length },
+            { label: L('Lỗi', 'Error'), color: '#f43f5e', n: all.filter(x => x.st?.error || x.stage === 'error').length },
+            { label: L('Chưa đóng image', 'Not imaged'), color: '#cbd5e1', n: all.filter(x => !x.st?.error && x.stage === 'new').length },
           ].filter(s => s.n)
           let acc = 0
           // 2) cột ngang: tệp theo loại; 3) cột ngang: dung lượng theo thiết bị
@@ -483,14 +495,14 @@ export default function Devices() {
           const CARD = 'flex flex-col rounded-xl border border-line bg-card p-3 shadow-sm'
           // toàn hệ thống: mọi vụ án (không chỉ vụ đang chọn)
           const sysKpis: [string, string, string][] = [
-            ['Vụ án', (cases?.length ?? 0).toLocaleString('vi'), `${(cases ?? []).filter(c => c.count).length} vụ có dữ liệu`],
-            ['Thiết bị', (cases ?? []).reduce((s, c) => s + c.device_count, 0).toLocaleString('vi'), 'trên mọi vụ án'],
-            ['Tổng tệp', (cases ?? []).reduce((s, c) => s + c.count, 0).toLocaleString('vi'), 'đã trích xuất'],
-            ['Ổ lưu trữ', sys ? `${Math.round((100 * sys.disk.used) / sys.disk.total)}%` : '–',
-              sys ? `${fmtSize(sys.disk.used)} / ${fmtSize(sys.disk.total)}` : 'đang đọc…'],
+            [L('Vụ án', 'Cases'), (cases?.length ?? 0).toLocaleString(isVi ? 'vi' : 'en'), `${(cases ?? []).filter(c => c.count).length} ${L('vụ có dữ liệu', 'cases with data')}`],
+            [L('Thiết bị', 'Devices'), (cases ?? []).reduce((s, c) => s + c.device_count, 0).toLocaleString(isVi ? 'vi' : 'en'), L('trên mọi vụ án', 'across all cases')],
+            [L('Tổng tệp', 'Total Files'), (cases ?? []).reduce((s, c) => s + c.count, 0).toLocaleString(isVi ? 'vi' : 'en'), L('đã trích xuất', 'extracted')],
+            [L('Ổ lưu trữ', 'Storage'), sys ? `${Math.round((100 * sys.disk.used) / sys.disk.total)}%` : '–',
+              sys ? `${fmtSize(sys.disk.used)} / ${fmtSize(sys.disk.total)}` : L('đang đọc…', 'reading…')],
           ]
           return (
-            <section aria-label="Thống kê" className="mb-4 space-y-3">
+            <section aria-label={L("Thống kê", "Statistics")} className="mb-4 space-y-3">
               <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 {sysKpis.map(([k, v, sub]) => (
                   <div key={k} className="rounded-xl border border-line bg-card px-5 py-3 shadow-sm">
@@ -502,12 +514,12 @@ export default function Devices() {
               </dl>
               <div className="grid gap-3 lg:grid-cols-3">
               <div className={CARD}>
-                <p className={H}><span>Thiết bị theo trạng thái · vụ này</span><span className="text-xs text-muted">{cards.length} máy · {cards.filter(c => c.usb).length} đang cắm</span></p>
+                <p className={H}><span>{L('Thiết bị theo trạng thái · vụ này', 'Devices by Status · This Case')}</span><span className="text-xs text-muted">{cards.length} {L('máy', 'devices')} · {cards.filter(c => c.usb).length} {L('đang cắm', 'connected')}</span></p>
                 <div className="flex flex-1 items-center justify-around gap-4">
                   <div className="relative h-36 w-36 shrink-0">
                     <svg viewBox="0 0 36 36" className="h-36 w-36 -rotate-90" role="img"
                       aria-label={status.map(s => `${s.label} ${s.n}`).join(', ')}>
-                      <circle cx="18" cy="18" r="14" fill="none" strokeWidth="6" stroke="#f1f5f9" />
+                      <circle cx="18" cy="18" r="14" fill="none" strokeWidth="6" stroke="rgb(255 255 255 / 0.08)" />
                       {status.map(s => {
                         const len = (100 * s.n) / cards.length
                         const el = <circle key={s.label} cx="18" cy="18" r="14" fill="none" strokeWidth="6" stroke={s.color}
@@ -518,11 +530,11 @@ export default function Devices() {
                     </svg>
                     <span className="absolute inset-0 flex flex-col items-center justify-center">
                       <span className="font-display text-3xl font-bold text-navy tabular-nums">{cards.length}</span>
-                      <span className="text-xs text-muted">thiết bị</span>
+                      <span className="text-xs text-muted">{L("thiết bị", "devices")}</span>
                     </span>
                   </div>
                   <ul className="space-y-2 text-sm text-muted">
-                    {!status.length && <li>Chưa có thiết bị</li>}
+                    {!status.length && <li>{L('Chưa có thiết bị', 'No devices')}</li>}
                     {status.map(s => (
                       <li key={s.label} className="flex items-center gap-1.5">
                         <span className="h-3 w-3 rounded-sm" style={{ background: s.color }} aria-hidden="true" />
@@ -534,13 +546,13 @@ export default function Devices() {
               </div>
 
               <div className={CARD}>
-                <p className={H}><span>Tệp theo loại · vụ này</span><span className="text-xs text-muted">{totalN.toLocaleString('vi')} tệp</span></p>
+                <p className={H}><span>{L('Tệp theo loại · vụ này', 'Files by Type · This Case')}</span><span className="text-xs text-muted">{totalN.toLocaleString(isVi ? 'vi' : 'en')} {L('tệp', 'files')}</span></p>
                 <ul className="flex flex-1 flex-col justify-between gap-1">
-                  {!types.length && <li className="m-auto text-xs text-muted">Chưa có tệp trích xuất</li>}
+                  {!types.length && <li className="m-auto text-xs text-muted">{L('Chưa có tệp trích xuất', 'No extracted files yet')}</li>}
                   {types.map(t => (
                     <li key={t.key} className="grid grid-cols-[7.5rem_1fr_4rem] items-center gap-2 text-xs"
                       title={`${t.label}: ${t.n.toLocaleString('vi')} tệp · ${fmtSize(t.size)}`}>
-                      <span className="truncate text-muted">{t.label}</span>
+                      <span className="truncate text-muted">{isVi ? t.label : t.en}</span>
                       <span className="h-3.5 rounded-full bg-slate-100">
                         <span className="block h-full rounded-full" style={{ width: `${Math.max(1, (100 * t.n) / maxType)}%`, background: t.color }} />
                       </span>
@@ -551,10 +563,10 @@ export default function Devices() {
               </div>
 
               <div className={CARD}>
-                <p className={H}><span>Dung lượng theo thiết bị · vụ này</span><span className="text-xs text-muted">{fmtSize(totalSize)}</span></p>
+                <p className={H}><span>{L('Dung lượng theo thiết bị · vụ này', 'Storage by Device · This Case')}</span><span className="text-xs text-muted">{fmtSize(totalSize)}</span></p>
                 {/* 1 dòng/máy (tên | cột | dung lượng) như "Tệp theo loại": khối biểu đồ đủ thấp để trang không cuộn */}
                 <ul className="flex flex-1 flex-col justify-around gap-1">
-                  {!perDev.length && <li className="m-auto text-xs text-muted">Chưa có dữ liệu thiết bị</li>}
+                  {!perDev.length && <li className="m-auto text-xs text-muted">{L('Chưa có dữ liệu thiết bị', 'No device data yet')}</li>}
                   {perDev.slice(0, 8).map(d => (
                     <li key={d.name} className="grid grid-cols-[7.5rem_1fr_4rem] items-center gap-2 text-xs"
                       title={`${d.name}: ${fmtSize(d.size)} · ${d.n.toLocaleString('vi')} tệp`}>
@@ -575,9 +587,9 @@ export default function Devices() {
 
         {/* Danh sách thiết bị: 20 thẻ/trang = đúng 4 hàng x 5 cột, chia đều chiều cao còn lại; di chuột/focus vào thẻ để xem chi tiết */}
         {cards.length > 0 && (
-          <h3 className="mb-2 flex items-baseline gap-2 font-display text-sm font-semibold text-white">
-            Danh sách thiết bị của vụ án <span className="text-[#00b8ff]">{caseName}</span>
-            <span className="text-xs font-normal text-slate-300">({cards.length})</span>
+          <h3 className={`mb-2 flex items-baseline gap-2 font-display text-sm font-semibold ${theme === 'dark' ? 'text-white' : 'text-navy'}`}>
+            {L('Danh sách thiết bị của vụ án', 'Case Devices')} <span className="text-[#00b8ff]">{caseName}</span>
+            <span className={`text-xs font-normal ${theme === 'dark' ? 'text-slate-300' : 'text-muted'}`}>({cards.length})</span>
           </h3>
         )}
         <div className="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 lg:grid-rows-[repeat(4,1fr)]">
@@ -594,7 +606,7 @@ export default function Devices() {
             // đóng image lỗi (stage quay về 'new' kèm lỗi) cũng viền đỏ như trích xuất lỗi
             // lần chạy gần nhất lỗi (vd không kết nối được thiết bị) thì viền đỏ, kể cả máy đã trích xuất xong từ trước
             const border = st?.error ? STAGE_CONFIG.error.borderCls : cfg.borderCls
-            const statusText = (st?.phase === 'ai' && stage === 'done' ? `Đã trích xuất · AI phân tích nền ${st.pct}%` : cfg.label) +
+            const statusText = (st?.phase === 'ai' && stage === 'done' ? L(`Đã trích xuất · AI phân tích nền ${st.pct}%`, `Extracted · AI background ${st.pct}%`) : (isVi ? cfg.label : cfg.enLabel)) +
               (stage === 'partial' && c.dev?.raw_count ? ` · ${c.dev.count.toLocaleString('vi')}/${c.dev.raw_count.toLocaleString('vi')} tệp` : '')
             const inf: DeviceInfo = c.dev?.info ?? {}
             const used = inf.storage_total ? inf.storage_total - (inf.storage_free ?? 0) : 0
@@ -653,17 +665,17 @@ export default function Devices() {
                   )}
                   {stage === 'new' && !unplugged && (() => {
                     const ready = !!(c.usb?.ios || c.usb?.adb === 'device' || (c.usb?.type === 'hdd' && c.usb.size))
-                    const why = c.usb?.type === 'hdd' ? 'Chưa có thẻ nhớ trong khe' : 'Bật Gỡ lỗi USB / tin cậy máy tính trên máy'
+                    const why = c.usb?.type === 'hdd' ? L('Chưa có thẻ nhớ trong khe', 'No memory card inserted') : L('Bật Gỡ lỗi USB / tin cậy máy tính trên máy', 'Enable USB Debugging / Trust Computer on device')
                     return (
                       <IconBtn disabled={!ready || !caseName} onClick={(e) => startImage(c, e)}
-                        label={ready ? `Đóng image ${c.name}` : why} tip={ready ? 'Đóng image' : why}>
+                        label={ready ? `${L('Đóng image', 'Create image')} ${c.name}` : why} tip={ready ? L('Đóng image', 'Create image') : why}>
                         <Download className="h-3.5 w-3.5" aria-hidden="true" />
                       </IconBtn>
                     )
                   })()}
                   {/* hành động phụ là icon ở hàng trên (như nút đóng image): thẻ giữ nguyên bố cục, không thêm nút chữ */}
                   {(stage === 'partial' || stage === 'error') && (
-                    <IconBtn disabled={!caseName} onClick={() => act(c, stage)} label={`${cfg.btn} ${c.name}`} tip={cfg.btn}>
+                    <IconBtn disabled={!caseName} onClick={() => act(c, stage)} label={`${isVi ? cfg.btn : cfg.enBtn} ${c.name}`} tip={isVi ? cfg.btn : cfg.enBtn}>
                       {stage === 'partial'
                         ? <Play className="h-3.5 w-3.5" aria-hidden="true" />
                         : <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />}
@@ -692,7 +704,7 @@ export default function Devices() {
                     {inf.model && inf.model !== inf.name && <span className="font-sans text-[11px] font-normal text-muted"> · {inf.model}</span>}
                   </p>
                   <p className="text-[11px] font-semibold text-ink">{statusText}</p>
-                  {!inf.name && <p className="text-[10px] italic text-muted">Thông tin máy có sau khi đóng image</p>}
+                  {!inf.name && <p className="text-[10px] italic text-muted">{L("Thông tin máy có sau khi đóng image", "Device info available after imaging")}</p>}
                   {infoRows.filter(([, v]) => v).map(([k, v]) => (
                     <div key={k} className="flex items-start justify-between gap-2 text-muted">
                       <span className="shrink-0">{k}</span>
@@ -702,24 +714,24 @@ export default function Devices() {
                   <div className="flex items-center justify-between gap-2 text-muted">
                     <span>Serial</span>
                     <span className="flex min-w-0 items-center gap-1.5">
-                      <span className="truncate font-mono text-[11px] font-semibold text-ink">{serialDisplay ?? 'Chưa rõ'}</span>
+                      <span className="truncate font-mono text-[11px] font-semibold text-ink">{serialDisplay ?? L('Chưa rõ', 'Unknown')}</span>
                       {serialDisplay && (
                         <button type="button" onClick={() => copyText(serialDisplay, `sn_${c.name}`)} className="shrink-0 text-[10px] text-primary hover:underline">
-                          {copiedKey === `sn_${c.name}` ? 'Đã chép' : 'Chép'}
+                          {copiedKey === `sn_${c.name}` ? L('Đã chép', 'Copied') : L('Chép', 'Copy')}
                         </button>
                       )}
                     </span>
                   </div>
                   {c.usb?.usb_id && (
                     <div className="flex items-center justify-between gap-2 text-muted">
-                      <span>Cổng USB</span>
+                      <span>{L('Cổng USB', 'USB Port')}</span>
                       <span className="font-mono text-[11px] text-ink">{c.usb.usb_id}</span>
                     </div>
                   )}
                   {inf.storage_total ? (
                     <div className="space-y-1">
                       <div className="flex items-center justify-between gap-2 text-muted">
-                        <span>Bộ nhớ máy</span>
+                        <span>{L('Bộ nhớ máy', 'Device Storage')}</span>
                         <span className="text-ink">{fmtSize(used)} / {fmtSize(inf.storage_total)}</span>
                       </div>
                       <div className="h-1.5 overflow-hidden rounded-full bg-slate-200" role="img" aria-label={`Đã dùng ${Math.round((100 * used) / inf.storage_total)}% bộ nhớ máy`}>
@@ -728,16 +740,16 @@ export default function Devices() {
                     </div>
                   ) : null}
                   <div className="flex items-center justify-between gap-2 text-muted">
-                    <span className="flex items-center gap-1"><Files className="h-3 w-3 text-slate-400" aria-hidden="true" /> Dữ liệu trích xuất</span>
+                    <span className="flex items-center gap-1"><Files className="h-3 w-3 text-slate-400" aria-hidden="true" /> {L('Dữ liệu trích xuất', 'Extracted Data')}</span>
                     <span className="font-semibold text-ink">{(() => {
                       if (c.dev?.count && c.dev.raw_count) return `${fmtSize(c.dev.size ?? 0)} · ${c.dev.count.toLocaleString('vi')} / ${c.dev.raw_count.toLocaleString('vi')} tệp (dở)`
                       if (c.dev?.count) return `${fmtSize(c.dev.size ?? 0)} · ${c.dev.count.toLocaleString('vi')} tệp`
                       if (c.dev?.raw_size) return `${fmtSize(c.dev.raw_size)} · ${(c.dev.raw_count ?? 0).toLocaleString('vi')} tệp (chờ trích xuất)`
                       const e = c.serial ? est[c.serial] : undefined
-                      if (e === null) return 'Đang ước tính…'
-                      if (e && 'error' in e) return <span className="text-danger">Không đọc được máy</span>
+                      if (e === null) return L('Đang ước tính…', 'Estimating…')
+                      if (e && 'error' in e) return <span className="text-danger">{L("Không đọc được máy", "Cannot read device")}</span>
                       if (e) return `Dự kiến ~${fmtSize(e.bytes)}${e.files != null ? ` · ${e.files} tệp` : ''}`
-                      return '0 B · 0 tệp'
+                      return L('0 B · 0 tệp', '0 B · 0 files')
                     })()}</span>
                   </div>
                   {stage === 'partial' && c.dev?.raw_size ? (
@@ -755,17 +767,17 @@ export default function Devices() {
                   <hr className="border-line" />
                   {imageName && (
                     <div className="flex items-center justify-between gap-2 text-muted">
-                      <span className="flex shrink-0 items-center gap-1"><HardDrive className="h-3 w-3 text-slate-400" aria-hidden="true" /> Tệp image</span>
+                      <span className="flex shrink-0 items-center gap-1"><HardDrive className="h-3 w-3 text-slate-400" aria-hidden="true" /> {L('Tệp image', 'Image File')}</span>
                       <span className="truncate font-mono text-[11px] text-ink" title={imageName}>{imageName}</span>
                     </div>
                   )}
                   <div className="flex items-center justify-between gap-2 text-muted">
-                    <span className="flex items-center gap-1"><Layers className="h-3 w-3 text-slate-400" aria-hidden="true" /> Tiếp nhận</span>
+                    <span className="flex items-center gap-1"><Layers className="h-3 w-3 text-slate-400" aria-hidden="true" /> {L('Tiếp nhận', 'Acquired')}</span>
                     <span className="text-ink">{formatDateTime(c.dev?.created_at)}</span>
                   </div>
                   {isBusy && st && (
                     <div className="space-y-0.5 text-[10px] text-muted">
-                      <div className="flex justify-between"><span>{st.files} tệp</span><span>{fmtSize(st.bytes)}</span></div>
+                      <div className="flex justify-between"><span>{st.files} {L('tệp', 'files')}</span><span>{fmtSize(st.bytes)}</span></div>
                       {st.log && <p className="truncate font-mono" title={st.log}>{st.log}</p>}
                     </div>
                   )}
@@ -797,7 +809,7 @@ export default function Devices() {
               className="rounded-md border border-white/20 p-1.5 text-white hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-transparent">
               <ChevronRight className="h-4 w-4" aria-hidden="true" />
             </button>
-            <span className="ml-2 text-xs text-slate-300">{pg * PAGE + 1}–{Math.min((pg + 1) * PAGE, cards.length)} / {cards.length} thiết bị</span>
+            <span className={`ml-2 text-xs ${theme === 'dark' ? 'text-slate-300' : 'text-muted'}`}>{pg * PAGE + 1}–{Math.min((pg + 1) * PAGE, cards.length)} / {cards.length} thiết bị</span>
           </nav>
         )}
       </main>
@@ -807,7 +819,7 @@ export default function Devices() {
         <form onSubmit={create} noValidate className="flex flex-col gap-4 p-5">
           <div className="flex items-center justify-between gap-2 border-b border-line pb-3">
             <h2 id="new-case-title" className="flex items-center gap-2 font-display text-base font-semibold text-navy">
-              <FolderPlus className="h-4 w-4 text-primary" aria-hidden="true" /> Tạo vụ án mới
+              <FolderPlus className="h-4 w-4 text-primary" aria-hidden="true" /> {L("Tạo vụ án", "Create Case")} mới
             </h2>
             <button type="button" onClick={() => dlg.current?.close()} aria-label="Đóng" className={CLOSE}>
               <X className="h-4 w-4" />
@@ -816,7 +828,7 @@ export default function Devices() {
 
           <div>
             <label htmlFor="new-case-name" className="mb-1 block text-sm font-medium text-ink">
-              Tên vụ án / Hồ sơ
+              {L('Tên vụ án / Hồ sơ', 'Case / Record Name')}
             </label>
             <input
               ref={nameRef}
@@ -838,7 +850,7 @@ export default function Devices() {
           )}
 
           <p className="text-xs text-muted leading-relaxed">
-            Vụ án mới sẽ tự động được chọn làm vụ đang làm việc. Thiết bị sẽ được thêm vào vụ án khi cắm máy.
+            {L('Vụ án mới sẽ tự động được chọn làm vụ đang làm việc. Thiết bị sẽ được thêm vào vụ án khi cắm máy.', 'The new case will be selected automatically. Devices are added when plugged in.')}
           </p>
 
           <div className="flex justify-end gap-2 pt-2 border-t border-line">
@@ -846,7 +858,7 @@ export default function Devices() {
               Hủy
             </button>
             <button type="submit" disabled={busyCreating} className={BTN}>
-              {busyCreating ? 'Đang tạo…' : 'Tạo vụ án'}
+              {busyCreating ? L('Đang tạo…', 'Creating…') : L('Tạo vụ án', 'Create Case')}
             </button>
           </div>
         </form>
@@ -862,14 +874,14 @@ export default function Devices() {
               <div className="flex items-center justify-between gap-2 border-b border-line pb-3">
                 <h2 id="sync-title" className="flex min-w-0 items-center gap-2 font-display text-base font-semibold text-navy">
                   <RefreshCw className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-                  <span className="truncate">Đồng bộ vụ án {caseName}</span>
+                  <span className="truncate">{L("Đồng bộ vụ án", "Sync Case")} {caseName}</span>
                 </h2>
                 <button type="button" onClick={() => syncDlg.current?.close()} aria-label="Đóng" className={CLOSE}>
                   <X className="h-4 w-4" />
                 </button>
               </div>
               <p className="text-xs leading-relaxed text-muted">
-                Chọn thiết bị để gửi bản image (kèm SHA-256) và thông tin thiết bị lên hệ thống trung tâm.
+                {L('Chọn thiết bị để gửi bản image (kèm SHA-256) và thông tin thiết bị lên hệ thống trung tâm.', 'Select devices to send image files (with SHA-256) and device metadata to the central server.')}
               </p>
               <label className="flex items-center gap-2 text-sm font-medium text-ink">
                 <input
