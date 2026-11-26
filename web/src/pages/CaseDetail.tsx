@@ -713,7 +713,7 @@ export default function CaseDetail() {
       {/* =========================================================================
           ROW 1: MAGNET AXIOM TOP BAR
           ========================================================================= */}
-      <header className="shrink-0 bg-[#0f2a4a] text-white border-b border-[#0d233e]">
+      <header className="shrink-0 bg-[#0a1f44] text-white border-b border-[#081833]">
         {/* Hàng 1: Tiêu đề vụ án & Toolbar các nút tác vụ */}
         <div className="flex h-11 items-center justify-between px-3">
           <div className="flex items-center gap-3 min-w-0">
@@ -722,13 +722,13 @@ export default function CaseDetail() {
               onClick={() => navigate('/')}
               title="Quay lại danh sách thiết bị"
               aria-label="Quay lại danh sách thiết bị"
-              className="inline-flex items-center gap-1 rounded bg-white/10 hover:bg-[#2f6fed] text-white px-1.5 py-1 text-[11px] font-medium cursor-pointer transition-colors"
+              className="inline-flex items-center gap-1 rounded bg-white/10 hover:bg-[#0077cc] text-white px-1.5 py-1 text-[11px] font-medium cursor-pointer transition-colors"
             >
               <ChevronLeft size={14} aria-hidden="true" />
             </button>
             <div className="h-4 w-px bg-white/20" />
             <div className="flex items-center gap-2 truncate">
-              <span className="text-xs font-bold uppercase tracking-wider text-[#4a7dff]">
+              <span className="text-xs font-bold uppercase tracking-wider text-[#00b8ff]">
                 {t('FORENSIC INVESTIGATION')}
               </span>
               <span className="text-xs text-slate-400">&bull;</span>
@@ -744,7 +744,7 @@ export default function CaseDetail() {
             <button
               type="button"
               onClick={() => setOpenCollectModal(true)}
-              className="inline-flex items-center gap-1.5 rounded bg-[#2f6fed] hover:bg-[#2458c9] text-white px-2.5 py-1 text-xs font-medium transition-all shadow-xs cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded bg-[#0077cc] hover:bg-[#0063ad] text-white px-2.5 py-1 text-xs font-medium transition-all shadow-xs cursor-pointer"
             >
               <Smartphone size={13} />
               <span>{t('Collect USB / ADB')}</span>
@@ -773,10 +773,10 @@ export default function CaseDetail() {
               <HardDrive size={13} />
               <span>{t('Devices')} ({devs?.items.length || 0})</span>
               <span
-                className={`ml-0.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${live.bad ? 'bg-red-500/20 text-red-300' : live.n ? 'bg-[#4a7dff]/20 text-[#4a7dff]' : 'bg-white/10 text-slate-400'}`}
+                className={`ml-0.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${live.bad ? 'bg-red-500/20 text-red-300' : live.n ? 'bg-[#00b8ff]/20 text-[#00b8ff]' : 'bg-white/10 text-slate-400'}`}
                 title="Devices connected"
               >
-                <span className={`h-1.5 w-1.5 rounded-full ${live.bad ? 'bg-red-400' : live.n ? 'bg-[#4a7dff]' : 'bg-slate-400'}`} aria-hidden="true" />
+                <span className={`h-1.5 w-1.5 rounded-full ${live.bad ? 'bg-red-400' : live.n ? 'bg-[#00b8ff]' : 'bg-slate-400'}`} aria-hidden="true" />
                 {live.n > 0 ? `${t('Connected')}: ${live.n}${live.bad ? ` · ${live.bad} ${t('errors')}` : ''}` : t('No connection')}
               </span>
             </button>
@@ -807,7 +807,7 @@ export default function CaseDetail() {
                   setSelectedCategory(e.target.value)
                   setSelectedSubCategory('all')
                 }}
-                className="h-6 rounded bg-[#0c223c] text-white border border-white/20 px-2 pr-6 text-[11px] appearance-none cursor-pointer focus:outline-none focus:border-[#4a7dff]"
+                className="h-6 rounded bg-[#0c223c] text-white border border-white/20 px-2 pr-6 text-[11px] appearance-none cursor-pointer focus:outline-none focus:border-[#00b8ff]"
               >
                 <option value="all">{t('Artifacts: ')}{t('All types')}</option>
                 <option value="chat">{t('Messages & Chats (CHAT)')}</option>
@@ -824,14 +824,14 @@ export default function CaseDetail() {
               type="date"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
-              className="h-6 rounded bg-[#0c223c] text-white border border-white/20 px-1.5 text-[11px] cursor-pointer focus:outline-none focus:border-[#4a7dff]"
+              className="h-6 rounded bg-[#0c223c] text-white border border-white/20 px-1.5 text-[11px] cursor-pointer focus:outline-none focus:border-[#00b8ff]"
             />
             <span className="inline-flex items-center gap-1 text-[11px] font-bold tracking-wider text-slate-300">Đến</span>
             <input
               type="date"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
-              className="h-6 rounded bg-[#0c223c] text-white border border-white/20 px-1.5 text-[11px] cursor-pointer focus:outline-none focus:border-[#4a7dff]"
+              className="h-6 rounded bg-[#0c223c] text-white border border-white/20 px-1.5 text-[11px] cursor-pointer focus:outline-none focus:border-[#00b8ff]"
             />
 
             {/* Bộ lọc đối tượng (kiểu app Ảnh iPhone) thay cho Người vật + QR + Thẻ: chỉ áp cho ảnh/video */}
@@ -847,7 +847,7 @@ export default function CaseDetail() {
                   }
                 }}
                 title="Lọc ảnh/video theo đối tượng nhận diện (tag AI, chữ OCR, GPS)"
-                className="h-6 rounded bg-[#0c223c] text-white border border-white/20 px-2 pr-6 text-[11px] appearance-none cursor-pointer focus:outline-none focus:border-[#4a7dff]"
+                className="h-6 rounded bg-[#0c223c] text-white border border-white/20 px-2 pr-6 text-[11px] appearance-none cursor-pointer focus:outline-none focus:border-[#00b8ff]"
               >
                 <option value="all">Đối tượng: Tất cả ({objCounts.all || 0})</option>
                 {OBJ.map((o) => (
@@ -872,7 +872,7 @@ export default function CaseDetail() {
                 placeholder={t('Type a search term...')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-6 w-44 lg:w-60 rounded bg-white text-slate-900 placeholder:text-slate-400 px-2 text-xs border border-slate-300 focus:outline-none focus:ring-1 focus:ring-[#2f6fed]"
+                className="h-6 w-44 lg:w-60 rounded bg-white text-slate-900 placeholder:text-slate-400 px-2 text-xs border border-slate-300 focus:outline-none focus:ring-1 focus:ring-[#0077cc]"
               />
               {searchQuery && (
                 <button
@@ -889,7 +889,7 @@ export default function CaseDetail() {
             </div>
             <button
               type="submit"
-              className="h-6 px-2.5 rounded bg-[#2f6fed] hover:bg-[#2458c9] text-white text-[11px] font-bold tracking-wider cursor-pointer"
+              className="h-6 px-2.5 rounded bg-[#0077cc] hover:bg-[#0063ad] text-white text-[11px] font-bold tracking-wider cursor-pointer"
             >
               {t('GO')}
             </button>
@@ -913,9 +913,9 @@ export default function CaseDetail() {
             ===================================================================== */}
         <aside className="w-60 lg:w-64 shrink-0 bg-white border-r border-[#d3dbe3] flex flex-col overflow-hidden">
           {/* Header Cột trái */}
-          <div className="h-9 px-3 bg-[#e8eef3] border-b border-[#d3dbe3] flex items-center justify-between text-xs font-semibold text-[#0f2a4a]">
+          <div className="h-9 px-3 bg-[#e8eef3] border-b border-[#d3dbe3] flex items-center justify-between text-xs font-semibold text-[#0a1f44]">
             <span className="flex items-center gap-1.5">
-              <Layers size={14} className="text-[#2f6fed]" />
+              <Layers size={14} className="text-[#0077cc]" />
               <span>{t('Artifacts Categories')}</span>
             </span>
             <span className="text-[11px] px-1.5 py-0.2 rounded bg-slate-200 text-slate-700 font-medium">
@@ -959,7 +959,7 @@ export default function CaseDetail() {
               <div className="px-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 truncate">
                 Lưu trữ{activeDevice ? ` · ${activeDevice}` : ''}
               </div>
-              <div className="px-2.5 pt-1 text-sm font-semibold text-[#0f2a4a]">
+              <div className="px-2.5 pt-1 text-sm font-semibold text-[#0a1f44]">
                 {fmtSize(storeStats.size)} <span className="text-[11px] font-normal text-slate-500">· {storeStats.n} tệp</span>
               </div>
               <div
@@ -1049,7 +1049,7 @@ export default function CaseDetail() {
                 className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded text-left transition-colors font-medium cursor-pointer ${
                   selectedCategory === 'chat' && selectedSubCategory === 'all'
                     ? 'bg-[#0078d4] text-white shadow-xs'
-                    : 'text-[#0f2a4a] hover:bg-slate-100'
+                    : 'text-[#0a1f44] hover:bg-slate-100'
                 }`}
               >
                 <span className="flex items-center gap-2">
@@ -1058,7 +1058,7 @@ export default function CaseDetail() {
                     className={
                       selectedCategory === 'chat' && selectedSubCategory === 'all'
                         ? 'text-white'
-                        : 'text-[#2f6fed]'
+                        : 'text-[#0077cc]'
                     }
                   />
                   <span className="font-bold">CHAT & MESSAGES</span>
@@ -1112,7 +1112,7 @@ export default function CaseDetail() {
                 className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded text-left transition-colors font-medium cursor-pointer ${
                   selectedCategory === 'call' && selectedSubCategory === 'all'
                     ? 'bg-[#0078d4] text-white shadow-xs'
-                    : 'text-[#0f2a4a] hover:bg-slate-100'
+                    : 'text-[#0a1f44] hover:bg-slate-100'
                 }`}
               >
                 <span className="flex items-center gap-2">
@@ -1172,7 +1172,7 @@ export default function CaseDetail() {
                   setSelectedSubCategory('all')
                 }}
                 className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded text-left transition-colors font-medium cursor-pointer ${
-                  selectedCategory === 'contact' ? 'bg-[#0078d4] text-white shadow-xs' : 'text-[#0f2a4a] hover:bg-slate-100'
+                  selectedCategory === 'contact' ? 'bg-[#0078d4] text-white shadow-xs' : 'text-[#0a1f44] hover:bg-slate-100'
                 }`}
               >
                 <span className="flex items-center gap-2">
@@ -1196,7 +1196,7 @@ export default function CaseDetail() {
           {/* Footer Cột trái */}
           <div className="h-8 px-3 bg-[#f7f9fa] border-t border-[#d3dbe3] flex items-center justify-between text-[11px] text-slate-500">
             <span>{t('Devices')}: {activeDevice || t('All devices')}</span>
-            <span className="text-[#2f6fed] font-semibold" title={files.length < fileTotal ? 'Đang hiện các tệp mới nhất' : undefined}>{files.length < fileTotal ? `${files.length}/${fileTotal}` : files.length} tệp</span>
+            <span className="text-[#0077cc] font-semibold" title={files.length < fileTotal ? 'Đang hiện các tệp mới nhất' : undefined}>{files.length < fileTotal ? `${files.length}/${fileTotal}` : files.length} tệp</span>
           </div>
         </aside>
 
@@ -1207,7 +1207,7 @@ export default function CaseDetail() {
           {/* Header Cột giữa */}
           <div className="h-9 px-3 bg-[#e8eef3] border-b border-[#d3dbe3] flex items-center justify-between text-xs">
             <div className="flex items-center gap-2">
-              <span className="font-bold text-[#0f2a4a]">{t('Evidence')}</span>
+              <span className="font-bold text-[#0a1f44]">{t('Evidence')}</span>
               <span className="text-slate-500">({shownTotal})</span>
               {activeSearch && (
                 <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[11px] font-medium">
@@ -1233,7 +1233,7 @@ export default function CaseDetail() {
             if (!ap?.by.chat) return null
             return (
               <div role="radiogroup" aria-label={`Lọc trong ${src}`} className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[#d3dbe3] bg-white px-3 py-1.5 text-[11px]">
-                <span className="mr-1 font-semibold text-[#0f2a4a]">{src}</span>
+                <span className="mr-1 font-semibold text-[#0a1f44]">{src}</span>
                 {STORE.filter((s) => ap.by[s.key]).map((s) => {
                   const on = storeKey === s.key
                   return (
@@ -1462,7 +1462,7 @@ export default function CaseDetail() {
                         </td>
                         <td
                           className={`py-1.5 px-2.5 font-medium border-r truncate max-w-40 ${
-                            isSelected ? 'border-blue-500/40 text-white' : 'border-slate-200/70 text-[#0f2a4a]'
+                            isSelected ? 'border-blue-500/40 text-white' : 'border-slate-200/70 text-[#0a1f44]'
                           }`}
                           title={item.chatId || item.displayName}
                         >
@@ -1511,7 +1511,7 @@ export default function CaseDetail() {
                 type="button"
                 disabled={srvBusy}
                 onClick={() => loadSrv(srv.page + 1)}
-                className="mx-auto my-2 block rounded border border-[#d3dbe3] bg-white px-3 py-1 text-[11px] text-[#0f2a4a] cursor-pointer hover:bg-[#e8eef3] disabled:cursor-wait disabled:opacity-60"
+                className="mx-auto my-2 block rounded border border-[#d3dbe3] bg-white px-3 py-1 text-[11px] text-[#0a1f44] cursor-pointer hover:bg-[#e8eef3] disabled:cursor-wait disabled:opacity-60"
               >
                 {srvBusy ? 'Đang tải…' : `Tải thêm (${srv.items.length} / ${srv.total})`}
               </button>
@@ -1532,7 +1532,7 @@ export default function CaseDetail() {
           {/* Header Cột phải */}
           <div className="h-9 px-3 bg-[#e8eef3] border-b border-[#d3dbe3] flex items-center justify-between text-xs">
             <span
-              className="font-bold text-[#0f2a4a] truncate max-w-56"
+              className="font-bold text-[#0a1f44] truncate max-w-56"
               title={selectedArtifact?.displayName}
             >
               {selectedArtifact?.displayName || 'Artifact Preview'}
@@ -1570,7 +1570,7 @@ export default function CaseDetail() {
                 <div className="border-b border-[#d3dbe3] bg-white p-3 flex flex-col shrink-0">
                   <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-150 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                     <span>{t('PREVIEW')}</span>
-                    <span className="text-[10px] text-[#2f6fed] font-semibold">
+                    <span className="text-[10px] text-[#0077cc] font-semibold">
                       {t(selectedArtifact.subCategory)}
                     </span>
                   </div>
@@ -1700,7 +1700,7 @@ export default function CaseDetail() {
         {/* SLIDE-OUT DRAWER KHI BẤM "TAGS, COMMENTS & PROFILES" */}
         {showTagsDrawer && (
           <aside className="absolute right-7 top-0 bottom-0 w-80 bg-white border-l border-[#d5dce3] shadow-2xl z-40 flex flex-col">
-            <div className="h-9 px-3 bg-[#0f2a4a] text-white flex items-center justify-between text-xs font-semibold">
+            <div className="h-9 px-3 bg-[#0a1f44] text-white flex items-center justify-between text-xs font-semibold">
               <span className="flex items-center gap-1.5">
                 <Tag size={13} className="text-[#00bcd4]" />
                 <span>TAGS, COMMENTS & PROFILES</span>
@@ -1805,7 +1805,7 @@ export default function CaseDetail() {
                     setItemNotes({ ...itemNotes, [id]: currentNoteInput })
                     setCurrentNoteInput('')
                   }}
-                  className="mt-1.5 w-full py-1 bg-[#2f6fed] hover:bg-[#2458c9] text-white rounded text-[11px] font-medium transition-colors cursor-pointer"
+                  className="mt-1.5 w-full py-1 bg-[#0077cc] hover:bg-[#0063ad] text-white rounded text-[11px] font-medium transition-colors cursor-pointer"
                 >
                   Lưu ghi chú chứng cứ
                 </button>
@@ -1889,7 +1889,7 @@ export default function CaseDetail() {
               </>
             )}
           </div>
-          <aside className="hidden md:block w-80 shrink-0 overflow-y-auto bg-[#0f2a4a] p-4 text-xs" onClick={(e) => e.stopPropagation()}>
+          <aside className="hidden md:block w-80 shrink-0 overflow-y-auto bg-[#0a1f44] p-4 text-xs" onClick={(e) => e.stopPropagation()}>
             <p className="mb-3 break-all text-sm font-semibold">{lbItem.displayName}</p>
             <dl className="space-y-2">
               {Object.entries(lbItem.metadata).map(([k, v]) =>
@@ -1935,8 +1935,8 @@ export default function CaseDetail() {
       {openGraphModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-5xl rounded-xl bg-white shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="flex h-11 items-center justify-between bg-[#0f2a4a] text-white px-4">
-              <span className="font-bold text-xs flex items-center gap-2 text-[#4a7dff]">
+            <div className="flex h-11 items-center justify-between bg-[#0a1f44] text-white px-4">
+              <span className="font-bold text-xs flex items-center gap-2 text-[#00b8ff]">
                 <Network size={14} />
                 Sơ đồ liên kết thực thể & bằng chứng vụ án: {name}
               </span>
@@ -2020,7 +2020,7 @@ export function GraphView({ name, all = false }: { name: string; all?: boolean }
         <button
           type="button"
           onClick={() => void download()}
-          className="ml-auto inline-flex items-center gap-1.5 rounded bg-[#2f6fed] hover:bg-[#2458c9] text-white px-2.5 py-1 text-xs font-medium cursor-pointer transition-colors"
+          className="ml-auto inline-flex items-center gap-1.5 rounded bg-[#0077cc] hover:bg-[#0063ad] text-white px-2.5 py-1 text-xs font-medium cursor-pointer transition-colors"
         >
           <Download className="h-3.5 w-3.5" /> Tải file HTML
         </button>
@@ -2121,8 +2121,8 @@ function CollectModal({ name, onClose }: { name: string; onClose: () => void }) 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-lg rounded-xl bg-white shadow-2xl overflow-hidden">
-        <div className="flex h-11 items-center justify-between bg-[#0f2a4a] text-white px-4">
-          <span className="font-bold text-xs flex items-center gap-2 text-[#4a7dff]">
+        <div className="flex h-11 items-center justify-between bg-[#0a1f44] text-white px-4">
+          <span className="font-bold text-xs flex items-center gap-2 text-[#00b8ff]">
             <Smartphone size={14} />
             Thu thập dữ liệu USB / ADB
           </span>
@@ -2142,7 +2142,7 @@ function CollectModal({ name, onClose }: { name: string; onClose: () => void }) 
               </div>
               <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
                 <div
-                  className="h-full bg-[#2f6fed] transition-all duration-300"
+                  className="h-full bg-[#0077cc] transition-all duration-300"
                   style={{ width: `${pull.pct}%` }}
                 />
               </div>
@@ -2235,7 +2235,7 @@ function CollectModal({ name, onClose }: { name: string; onClose: () => void }) 
                 <button
                   type="submit"
                   disabled={busy}
-                  className="rounded bg-[#2f6fed] hover:bg-[#2458c9] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 cursor-pointer"
+                  className="rounded bg-[#0077cc] hover:bg-[#0063ad] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 cursor-pointer"
                 >
                   {busy ? t('Starting...') : t('Start collection')}
                 </button>
@@ -2316,8 +2316,8 @@ function CaseManagerDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-lg rounded-xl bg-white shadow-2xl overflow-hidden">
-        <div className="flex h-11 items-center justify-between bg-[#0f2a4a] text-white px-4">
-          <span className="font-bold text-xs flex items-center gap-2 text-[#4a7dff]">
+        <div className="flex h-11 items-center justify-between bg-[#0a1f44] text-white px-4">
+          <span className="font-bold text-xs flex items-center gap-2 text-[#00b8ff]">
             <Plus size={14} /> Quản lý vụ án / dự án
           </span>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-white cursor-pointer">
@@ -2331,7 +2331,7 @@ function CaseManagerDialog({
             <label className="block text-xs font-semibold text-slate-700">Tạo vụ án mới:</label>
             <input value={newCase} onChange={(e) => setNewCase(e.target.value)} placeholder="Tên vụ án mới" className="w-full rounded border border-slate-300 p-2 text-xs" />
             <input value={newNote} onChange={(e) => setNewNote(e.target.value)} placeholder="Ghi chú (tuỳ chọn)" className="w-full rounded border border-slate-300 p-2 text-xs" />
-            <button type="submit" disabled={busy} className="rounded bg-[#2f6fed] hover:bg-[#2458c9] px-3 py-1.5 text-xs text-white disabled:opacity-50 cursor-pointer">
+            <button type="submit" disabled={busy} className="rounded bg-[#0077cc] hover:bg-[#0063ad] px-3 py-1.5 text-xs text-white disabled:opacity-50 cursor-pointer">
               {busy ? '...' : 'Tạo vụ án'}
             </button>
           </form>
@@ -2343,7 +2343,7 @@ function CaseManagerDialog({
             <input value={editName} onChange={(e) => setEditName(e.target.value)} className="w-full rounded border border-slate-300 p-2 text-xs" />
             <input value={editNote} onChange={(e) => setEditNote(e.target.value)} placeholder="Ghi chú (tuỳ chọn)" className="w-full rounded border border-slate-300 p-2 text-xs" />
             <div className="flex gap-2">
-              <button type="button" onClick={renameCase} disabled={busy} className="rounded bg-[#2f6fed] hover:bg-[#2458c9] px-3 py-1.5 text-xs text-white disabled:opacity-50 cursor-pointer">Đổi tên</button>
+              <button type="button" onClick={renameCase} disabled={busy} className="rounded bg-[#0077cc] hover:bg-[#0063ad] px-3 py-1.5 text-xs text-white disabled:opacity-50 cursor-pointer">Đổi tên</button>
               <button type="button" onClick={deleteCase} disabled={busy} className="rounded bg-red-600 hover:bg-red-700 px-3 py-1.5 text-xs text-white disabled:opacity-50 cursor-pointer">Xoá vụ án</button>
             </div>
           </div>
@@ -2396,7 +2396,7 @@ function UploadModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-md rounded-xl bg-white shadow-2xl overflow-hidden">
-        <div className="flex h-11 items-center justify-between bg-[#0f2a4a] text-white px-4">
+        <div className="flex h-11 items-center justify-between bg-[#0a1f44] text-white px-4">
           <span className="font-bold text-xs flex items-center gap-2 text-[#00bcd4]">
             <Upload size={14} />
             Tải lên tài liệu chứng cứ
@@ -2450,7 +2450,7 @@ function UploadModal({
             <button
               type="submit"
               disabled={busy}
-              className="rounded bg-[#2f6fed] hover:bg-[#2458c9] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 cursor-pointer"
+              className="rounded bg-[#0077cc] hover:bg-[#0063ad] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 cursor-pointer"
             >
               {busy ? t('Uploading...') : t('Upload now')}
             </button>
@@ -2496,7 +2496,7 @@ function PackageModal({ name, onClose }: { name: string; onClose: () => void }) 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-lg rounded-xl bg-white shadow-2xl overflow-hidden">
-        <div className="flex h-11 items-center justify-between bg-[#0f2a4a] text-white px-4">
+        <div className="flex h-11 items-center justify-between bg-[#0a1f44] text-white px-4">
           <span className="font-bold text-xs flex items-center gap-2 text-[#00bcd4]">
             <Archive size={14} />
             Đóng gói & Báo cáo hồ sơ chứng cứ vụ án
@@ -2522,7 +2522,7 @@ function PackageModal({ name, onClose }: { name: string; onClose: () => void }) 
               <button
                 type="submit"
                 disabled={busy}
-                className="rounded bg-[#2f6fed] hover:bg-[#2458c9] px-3 py-2 text-xs font-medium text-white disabled:opacity-50 cursor-pointer"
+                className="rounded bg-[#0077cc] hover:bg-[#0063ad] px-3 py-2 text-xs font-medium text-white disabled:opacity-50 cursor-pointer"
               >
                 {busy ? t('Creating...') : t('Package')}
               </button>
@@ -2608,7 +2608,7 @@ function DeviceMgrModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-lg rounded-xl bg-white shadow-2xl overflow-hidden">
-        <div className="flex h-11 items-center justify-between bg-[#0f2a4a] text-white px-4">
+        <div className="flex h-11 items-center justify-between bg-[#0a1f44] text-white px-4">
           <span className="font-bold text-xs flex items-center gap-2 text-[#00bcd4]">
             <HardDrive size={14} />
             Quản lý thiết bị thu giữ trong vụ án
@@ -2645,7 +2645,7 @@ function DeviceMgrModal({
               <button
                 type="submit"
                 disabled={busy}
-                className="rounded bg-[#2f6fed] hover:bg-[#2458c9] px-3 py-2 text-xs font-medium text-white disabled:opacity-50 cursor-pointer"
+                className="rounded bg-[#0077cc] hover:bg-[#0063ad] px-3 py-2 text-xs font-medium text-white disabled:opacity-50 cursor-pointer"
               >
                 Thêm
               </button>

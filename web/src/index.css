@@ -1,15 +1,15 @@
 @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600&display=swap');
 @import 'tailwindcss';
 
-/* Design tokens — light mode, teal (theo mockup). Dùng qua class Tailwind: bg-primary, text-ink, border-line... */
+/* Design tokens — xanh công nghệ theo ảnh nền forensic (navy #0a1f44 + xanh sáng). Dùng qua class Tailwind: bg-primary, text-ink, border-line... */
 @theme {
   --font-sans: 'Source Sans 3', system-ui, sans-serif;
   --font-display: 'Lexend', system-ui, sans-serif;
 
-  --color-primary: #14919b;        /* nút chính, active nav, chart */
-  --color-primary-hover: #0b636b;
-  --color-primary-soft: #e6f5f6;   /* nền nhạt cho active item, badge */
-  --color-navy: #0f2a4a;           /* logo, tiêu đề đậm */
+  --color-primary: #0077cc;        /* nút chính, active nav, chart; chữ trắng trên nền này 4.6:1 */
+  --color-primary-hover: #0063ad;
+  --color-primary-soft: #e0f2fe;   /* nền nhạt cho active item, badge */
+  --color-navy: #0a1f44;           /* logo, tiêu đề đậm; trùng màu nền ảnh */
   --color-ink: #1f2937;            /* chữ chính, contrast 4.5:1 trên nền trắng */
   --color-muted: #6b7280;          /* chữ phụ */
   --color-line: #e5e7eb;           /* viền */
@@ -31,6 +31,11 @@
   h1, h2, h3, .font-display { font-family: var(--font-display); }
   :focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; } }
+}
+
+/* Nền màn chính: ảnh forensic (navy + vân tay + sóng dữ liệu); màu dự phòng khi ảnh chưa tải */
+@utility app-bg {
+  background: #0a1f44 url('/bg-forensic.png') center / cover no-repeat;
 }
 
 @utility card {

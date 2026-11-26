@@ -6,7 +6,7 @@ import Login from './pages/Login'
 
 const CaseDetail = lazy(() => import('./pages/CaseDetail'))
 const Devices = lazy(() => import('./pages/Devices'))
-const Loading = <div className="h-screen w-screen bg-[#0f2a4a] flex items-center justify-center text-white text-sm">Đang tải...</div>
+const Loading = <div className="h-screen w-screen bg-[#0a1f44] flex items-center justify-center text-white text-sm">Đang tải...</div>
 
 function RequireAuth({ children }: { children: ReactNode }) {
   return getUser() ? children : <Navigate to="/login" replace />
@@ -32,7 +32,7 @@ export default function App() {
           <RequireAuth>
             <Suspense
               fallback={
-                <div className="h-screen w-screen bg-[#0f2a4a] flex items-center justify-center text-white text-sm">
+                <div className="h-screen w-screen bg-[#0a1f44] flex items-center justify-center text-white text-sm">
                   Đang nạp giao diện điều tra Magnet AXIOM...
                 </div>
               }

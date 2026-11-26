@@ -334,9 +334,9 @@ export default function Devices() {
   }
 
   return (
-    <div className="h-dvh w-full bg-canvas text-ink flex flex-col">
+    <div className="app-bg h-dvh w-full text-ink flex flex-col">
       {/* Header: cùng kiểu thanh menu trang chứng cứ (CaseDetail ROW 1) */}
-      <header className="sticky top-0 z-30 shrink-0 bg-[#0f2a4a] text-white border-b border-[#0d233e]">
+      <header className="sticky top-0 z-30 shrink-0 bg-[#0a1f44] text-white border-b border-[#081833]">
         <div className="flex h-11 items-center justify-between px-3">
           <div className="flex items-center gap-3 min-w-0">
             <select
@@ -354,13 +354,13 @@ export default function Devices() {
               type="button"
               onClick={openCreate}
               title="Tạo vụ án mới"
-              className="inline-flex items-center gap-1 rounded bg-white/10 hover:bg-[#2f6fed] text-white px-1.5 py-1 text-[11px] font-medium cursor-pointer transition-colors"
+              className="inline-flex items-center gap-1 rounded bg-white/10 hover:bg-[#0077cc] text-white px-1.5 py-1 text-[11px] font-medium cursor-pointer transition-colors"
             >
               <Plus size={13} />
             </button>
             <div className="h-4 w-px bg-white/20" />
             <div className="flex items-center gap-2 truncate">
-              <span className="text-xs font-bold uppercase tracking-wider text-[#4a7dff]">{t('FORENSIC INVESTIGATION')}</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-[#00b8ff]">{t('FORENSIC INVESTIGATION')}</span>
               <span className="text-xs text-slate-400">&bull;</span>
               <span className="text-sm font-bold text-white truncate" title={caseName}>{caseName || 'Chưa chọn vụ án'}</span>
             </div>
@@ -380,7 +380,7 @@ export default function Devices() {
               type="button"
               disabled={!caseName}
               onClick={() => navigate(`/cases/${encodeURIComponent(caseName)}`)}
-              className="inline-flex items-center gap-1.5 rounded bg-[#2f6fed] hover:bg-[#2458c9] disabled:opacity-40 text-white px-2.5 py-1 text-xs font-medium transition-all shadow-xs cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded bg-[#0077cc] hover:bg-[#0063ad] disabled:opacity-40 text-white px-2.5 py-1 text-xs font-medium transition-all shadow-xs cursor-pointer"
             >
               <Files size={13} />
               <span>Xem chứng cứ tổng</span>
@@ -389,10 +389,10 @@ export default function Devices() {
               <HardDrive size={13} />
               <span>Thiết bị ({cards.length})</span>
               <span
-                className={`ml-0.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${usb.length ? 'bg-[#4a7dff]/20 text-[#4a7dff]' : 'bg-white/10 text-slate-400'}`}
+                className={`ml-0.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${usb.length ? 'bg-[#00b8ff]/20 text-[#00b8ff]' : 'bg-white/10 text-slate-400'}`}
                 title="Devices connected"
               >
-                <span className={`h-1.5 w-1.5 rounded-full ${usb.length ? 'bg-[#4a7dff]' : 'bg-slate-400'}`} aria-hidden="true" />
+                <span className={`h-1.5 w-1.5 rounded-full ${usb.length ? 'bg-[#00b8ff]' : 'bg-slate-400'}`} aria-hidden="true" />
                 {usb.length > 0 ? `Kết nối: ${usb.length}` : 'Không kết nối'}
               </span>
             </span>
@@ -414,12 +414,12 @@ export default function Devices() {
       <main className="flex w-full min-h-0 flex-1 flex-col overflow-y-auto px-4 sm:px-6 lg:px-8 py-3">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="font-display text-lg font-bold text-navy flex items-center gap-2">
+            <h2 className="font-display text-lg font-bold text-white flex items-center gap-2">
               Thống kê
             </h2>
           </div>
 
-          <div className="flex items-center gap-2 text-xs text-muted">
+          <div className="flex items-center gap-2 text-xs text-slate-300">
             <span className="inline-flex items-center gap-1">
               <span className="h-2 w-2 rounded-full bg-emerald-500" /> Đang kết nối cáp USB
             </span>
@@ -430,7 +430,7 @@ export default function Devices() {
         </div>
 
         {cases?.length === 0 && (
-          <div className="card mb-5 flex items-center justify-between gap-3 p-4 text-sm text-muted border-amber-200 bg-amber-50/40">
+          <div className="card mb-5 flex items-center justify-between gap-3 p-4 text-sm text-muted border-amber-200 bg-amber-50">
             <span>Chưa có hồ sơ vụ án nào. Hãy tạo vụ án để bắt đầu quản lý và thu thập thiết bị.</span>
             <button type="button" onClick={openCreate} className={BTN}>
               <FolderPlus className="h-4 w-4" aria-hidden="true" /> Tạo vụ án
@@ -446,7 +446,7 @@ export default function Devices() {
         )}
 
         {!cards.length && (
-          <div className="card p-10 text-center text-muted border-dashed border-2">
+          <div className="card mb-4 p-10 text-center text-muted border-dashed border-2">
             <Smartphone className="mx-auto h-12 w-12 text-muted/40 mb-3" />
             <p className="font-medium text-ink">Chưa có thiết bị nào trong vụ án</p>
             <p className="text-xs text-muted mt-1 max-w-md mx-auto">
@@ -575,9 +575,9 @@ export default function Devices() {
 
         {/* Danh sách thiết bị: 20 thẻ/trang = đúng 4 hàng x 5 cột, chia đều chiều cao còn lại; di chuột/focus vào thẻ để xem chi tiết */}
         {cards.length > 0 && (
-          <h3 className="mb-2 flex items-baseline gap-2 font-display text-sm font-semibold text-navy">
-            Danh sách thiết bị của vụ án <span className="text-primary">{caseName}</span>
-            <span className="text-xs font-normal text-muted">({cards.length})</span>
+          <h3 className="mb-2 flex items-baseline gap-2 font-display text-sm font-semibold text-white">
+            Danh sách thiết bị của vụ án <span className="text-[#00b8ff]">{caseName}</span>
+            <span className="text-xs font-normal text-slate-300">({cards.length})</span>
           </h3>
         )}
         <div className="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 lg:grid-rows-[repeat(4,1fr)]">
@@ -784,20 +784,20 @@ export default function Devices() {
         {pages > 1 && (
           <nav className="mt-4 flex items-center justify-center gap-1 text-sm" aria-label="Phân trang thiết bị">
             <button type="button" onClick={() => setPage(pg - 1)} disabled={pg === 0} aria-label="Trang trước"
-              className="rounded-md border border-line p-1.5 text-primary hover:bg-primary/10 disabled:opacity-40 disabled:hover:bg-transparent">
+              className="rounded-md border border-white/20 p-1.5 text-white hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-transparent">
               <ChevronLeft className="h-4 w-4" aria-hidden="true" />
             </button>
             {Array.from({ length: pages }, (_, n) => (
               <button key={n} type="button" onClick={() => setPage(n)} aria-current={n === pg ? 'page' : undefined}
-                className={`min-w-8 rounded-md border px-2 py-1 font-medium ${n === pg ? 'border-primary bg-primary text-white' : 'border-line text-ink hover:bg-primary/10'}`}>
+                className={`min-w-8 rounded-md border px-2 py-1 font-medium ${n === pg ? 'border-primary bg-primary text-white' : 'border-white/20 text-white hover:bg-white/10'}`}>
                 {n + 1}
               </button>
             ))}
             <button type="button" onClick={() => setPage(pg + 1)} disabled={pg === pages - 1} aria-label="Trang sau"
-              className="rounded-md border border-line p-1.5 text-primary hover:bg-primary/10 disabled:opacity-40 disabled:hover:bg-transparent">
+              className="rounded-md border border-white/20 p-1.5 text-white hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-transparent">
               <ChevronRight className="h-4 w-4" aria-hidden="true" />
             </button>
-            <span className="ml-2 text-xs text-muted">{pg * PAGE + 1}–{Math.min((pg + 1) * PAGE, cards.length)} / {cards.length} thiết bị</span>
+            <span className="ml-2 text-xs text-slate-300">{pg * PAGE + 1}–{Math.min((pg + 1) * PAGE, cards.length)} / {cards.length} thiết bị</span>
           </nav>
         )}
       </main>

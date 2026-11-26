@@ -50,7 +50,7 @@ function visNode(n: GraphNode) {
     shape: 'image', image: icon(n.type === 'device' ? n.dtype ?? 'other' : g, c, g === 'case' || g === 'device', shared),
     size: BASE[g] + (g === 'case' || g === 'device' ? 0 : Math.min(6, (n.files ?? 1) - 1)) + (shared ? 6 : 0),
     font: { size: g === 'case' ? 16 : g === 'device' ? 13 : 11 },
-    color: { background: c, border: c, highlight: { background: c, border: '#0f2a4a' }, hover: { background: c, border: '#0f2a4a' } },
+    color: { background: c, border: c, highlight: { background: c, border: '#0a1f44' }, hover: { background: c, border: '#0a1f44' } },
   }
 }
 

@@ -62,7 +62,7 @@ export default function Login() {
               <select
                 value={lang}
                 onChange={(e) => setLang(e.target.value)}
-                className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-800 focus:outline-none focus:border-[#2f6fed] cursor-pointer"
+                className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-800 focus:outline-none focus:border-[#0077cc] cursor-pointer"
               >
                 <option value="en">English</option>
                 <option value="vi">Tiếng Việt</option>
@@ -74,7 +74,7 @@ export default function Login() {
         className="relative flex w-full flex-col justify-center overflow-hidden px-8 py-14 sm:px-14 lg:w-1/2 lg:min-h-screen"
         style={{
           background:
-            'radial-gradient(circle at 14% 16%, #123a63 0%, #0f2a4a 30%, #0c233e 55%, #091a30 80%, #061423 100%)',
+            'radial-gradient(circle at 14% 16%, #123a63 0%, #0a1f44 30%, #0c233e 55%, #091a30 80%, #061423 100%)',
         }}
       >
         {/* Dải sóng cyber luminous mượt mà (Wave ribbons) */}
@@ -271,23 +271,23 @@ export default function Login() {
             >
               <path
                 d="M12 1.5L2.5 5.5V13C2.5 19.8 6.8 24.8 12 26.5C17.2 24.8 21.5 19.8 21.5 13V5.5L12 1.5Z"
-                fill="#0f2a4a"
+                fill="#0a1f44"
               />
               <path
                 d="M7.5 13.5C7.5 10.8 9.5 8.8 12 8.8C14.5 8.8 16.5 10.8 16.5 13.5V15.5"
-                stroke="#2f6fed"
+                stroke="#0077cc"
                 strokeWidth="1.6"
                 strokeLinecap="round"
               />
               <path
                 d="M9.8 14.5C9.8 13.2 10.8 12.2 12 12.2C13.2 12.2 14.2 13.2 14.2 14.5V17"
-                stroke="#2f6fed"
+                stroke="#0077cc"
                 strokeWidth="1.6"
                 strokeLinecap="round"
               />
               <path
                 d="M12 15.2V19.2"
-                stroke="#2f6fed"
+                stroke="#0077cc"
                 strokeWidth="1.6"
                 strokeLinecap="round"
               />
@@ -295,7 +295,7 @@ export default function Login() {
 
             {/* Chữ thương hiệu 2 tầng lớn hơn */}
             <div className="flex flex-col">
-              <span className="font-display text-[19px] sm:text-[20px] font-extrabold tracking-wider text-[#0f2a4a] leading-none">
+              <span className="font-display text-[19px] sm:text-[20px] font-extrabold tracking-wider text-[#0a1f44] leading-none">
                 FORENSIC
               </span>
               <span className="font-display text-[19px] sm:text-[20px] font-extrabold tracking-wider text-[#4a7dff] leading-none mt-1">
@@ -327,7 +327,7 @@ export default function Login() {
                   className={`h-[50px] w-full rounded-xl border bg-white pl-12 pr-4 text-[15px] text-slate-800 placeholder:text-slate-400 transition-all outline-none ${
                     err.name
                       ? 'border-red-400 focus:border-red-500 focus:ring-2 focus:ring-red-100'
-                      : 'border-slate-200/90 focus:border-[#2f6fed] focus:ring-2 focus:ring-[#2f6fed]/15'
+                      : 'border-slate-200/90 focus:border-[#0077cc] focus:ring-2 focus:ring-[#0077cc]/15'
                   }`}
                 />
               </div>
@@ -356,7 +356,7 @@ export default function Login() {
                   className={`h-[50px] w-full rounded-xl border bg-white pl-12 pr-12 text-[15px] text-slate-800 placeholder:text-slate-400 transition-all outline-none ${
                     err.pass
                       ? 'border-red-400 focus:border-red-500 focus:ring-2 focus:ring-red-100'
-                      : 'border-slate-200/90 focus:border-[#2f6fed] focus:ring-2 focus:ring-[#2f6fed]/15'
+                      : 'border-slate-200/90 focus:border-[#0077cc] focus:ring-2 focus:ring-[#0077cc]/15'
                   }`}
                 />
                 <button
@@ -387,7 +387,7 @@ export default function Login() {
                   type="checkbox"
                   checked={remember}
                   onChange={(e) => setRemember(e.target.checked)}
-                  className="h-4.5 w-4.5 rounded border-slate-300 text-[#2f6fed] focus:ring-[#2f6fed] accent-[#2f6fed] cursor-pointer"
+                  className="h-4.5 w-4.5 rounded border-slate-300 text-[#0077cc] focus:ring-[#0077cc] accent-[#0077cc] cursor-pointer"
                 />
                 <span>Ghi nhớ đăng nhập</span>
               </label>
@@ -397,7 +397,7 @@ export default function Login() {
             <button
               type="submit"
               disabled={busy}
-              className="mt-1 flex h-[50px] w-full items-center justify-center gap-2.5 rounded-xl bg-[#2f6fed] text-[16px] font-medium text-white shadow-md shadow-[#2f6fed]/20 transition-all hover:bg-[#2458c9] active:scale-[0.99] cursor-pointer disabled:opacity-75 disabled:cursor-not-allowed"
+              className="mt-1 flex h-[50px] w-full items-center justify-center gap-2.5 rounded-xl bg-[#0077cc] text-[16px] font-medium text-white shadow-md shadow-[#0077cc]/20 transition-all hover:bg-[#0063ad] active:scale-[0.99] cursor-pointer disabled:opacity-75 disabled:cursor-not-allowed"
             >
               <LogIn size={20} />
               <span>{busy ? 'Đang xác thực...' : 'Đăng nhập'}</span>
@@ -429,7 +429,7 @@ export default function Login() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-200">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl border border-slate-100">
             <div className="flex items-start justify-between">
-              <div className="flex items-center gap-2 text-[#2f6fed] font-semibold text-base">
+              <div className="flex items-center gap-2 text-[#0077cc] font-semibold text-base">
                 <HelpCircle size={20} />
                 <span>Hỗ trợ đăng nhập</span>
               </div>
@@ -452,7 +452,7 @@ export default function Login() {
             <button
               type="button"
               onClick={() => setShowHelp(false)}
-              className="mt-5 w-full rounded-xl bg-[#2f6fed] py-2.5 text-sm font-medium text-white hover:bg-[#2458c9] transition-colors cursor-pointer"
+              className="mt-5 w-full rounded-xl bg-[#0077cc] py-2.5 text-sm font-medium text-white hover:bg-[#0063ad] transition-colors cursor-pointer"
             >
               Đã hiểu
             </button>
