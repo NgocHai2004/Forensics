@@ -58,7 +58,6 @@ Chứng cứ: `./sample` → `/evidence/sample`, `/mnt/casehdd16tb` → `/eviden
 ```bash
 docker compose run --rm --no-deps app python -m app.indexer     # self-check indexer (in OK)
 docker compose run --rm --no-deps app python -m app.retrieval   # self-check truy hồi (in retrieval OK)
-python3 tests/smoke_ask.py                                      # app đang chạy: index sample + 7 câu hỏi thật
 ```
 
 ## Chưa có
