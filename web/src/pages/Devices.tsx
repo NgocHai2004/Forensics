@@ -7,7 +7,6 @@ import {
   ChevronLeft,
   ChevronRight,
   HardDrive,
-  ShieldCheck,
   Smartphone,
   Layers,
   Files,
@@ -34,14 +33,14 @@ const STAGE_CONFIG: Record<
   Stage,
   { label: string; btn: string; borderCls: string }
 > = {
-  // màu viền thẻ thay cho nhãn: vàng = đã có image, xanh dương = đang chạy, xanh lá = trích xuất xong, đỏ = lỗi
-  new: { label: 'Chưa đóng image', btn: 'Đóng image & Hash SHA-256', borderCls: 'border-line' },
-  imaging: { label: 'Đang đóng image…', btn: 'Đang đóng image…', borderCls: 'border-blue-500' },
-  imaged: { label: 'Đã có image + hash', btn: 'Bắt đầu trích xuất', borderCls: 'border-amber-400' },
-  partial: { label: 'Trích xuất dở (bị ngắt)', btn: 'Tiếp tục trích xuất', borderCls: 'border-amber-400' },
-  extracting: { label: 'Đang trích xuất…', btn: 'Đang trích xuất…', borderCls: 'border-blue-500' },
-  done: { label: 'Trích xuất hoàn tất', btn: 'Xem chứng cứ vụ án', borderCls: 'border-emerald-500' },
-  error: { label: 'Lỗi trích xuất', btn: 'Trích xuất lại', borderCls: 'border-rose-500' },
+  // màu vạch trái của thẻ thay cho nhãn (viền ngoài để xám nhạt): vàng = đã có image, xanh dương = đang chạy, xanh lá = xong, đỏ = lỗi
+  new: { label: 'Chưa đóng image', btn: 'Đóng image & Hash SHA-256', borderCls: 'border-l-line' },
+  imaging: { label: 'Đang đóng image…', btn: 'Đang đóng image…', borderCls: 'border-l-blue-500' },
+  imaged: { label: 'Đã có image + hash', btn: 'Bắt đầu trích xuất', borderCls: 'border-l-amber-400' },
+  partial: { label: 'Trích xuất dở (bị ngắt)', btn: 'Tiếp tục trích xuất', borderCls: 'border-l-amber-400' },
+  extracting: { label: 'Đang trích xuất…', btn: 'Đang trích xuất…', borderCls: 'border-l-blue-500' },
+  done: { label: 'Trích xuất hoàn tất', btn: 'Xem chứng cứ vụ án', borderCls: 'border-l-emerald-500' },
+  error: { label: 'Lỗi trích xuất', btn: 'Trích xuất lại', borderCls: 'border-l-rose-500' },
 }
 
 const CASE_KEY = 'mf_case'
@@ -279,8 +278,8 @@ export default function Devices() {
     }
   }
 
-  // 10 thẻ/trang (dashboard biểu đồ ở trên); số trang giảm khi bớt máy thì kẹp về trang cuối
-  const PAGE = 10
+  // 20 thẻ/trang = 4 hàng x 5 cột (dashboard biểu đồ ở trên); số trang giảm khi bớt máy thì kẹp về trang cuối
+  const PAGE = 20
   const pages = Math.max(1, Math.ceil(cards.length / PAGE))
   const pg = Math.min(page, pages - 1)
 
@@ -335,7 +334,7 @@ export default function Devices() {
   }
 
   return (
-    <div className="min-h-screen w-full bg-canvas text-ink flex flex-col">
+    <div className="h-dvh w-full bg-canvas text-ink flex flex-col">
       {/* Header: cùng kiểu thanh menu trang chứng cứ (CaseDetail ROW 1) */}
       <header className="sticky top-0 z-30 shrink-0 bg-[#0f2a4a] text-white border-b border-[#0d233e]">
         <div className="flex h-11 items-center justify-between px-3">
@@ -410,9 +409,10 @@ export default function Devices() {
         </div>
       </header>
 
-      {/* Main container tràn viền tối đa (full width) */}
-      <main className="w-full flex-1 px-4 sm:px-6 lg:px-8 py-5">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      {/* Trang vừa 1 màn hình, không cuộn: biểu đồ cao vừa đủ, danh sách thiết bị (2 hàng x 5 cột) giãn lấp phần còn lại;
+          cửa sổ quá thấp thì chỉ vùng này cuộn */}
+      <main className="flex w-full min-h-0 flex-1 flex-col overflow-y-auto px-4 sm:px-6 lg:px-8 py-3">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="font-display text-lg font-bold text-navy flex items-center gap-2">
               Thống kê
@@ -479,8 +479,8 @@ export default function Devices() {
           const maxType = Math.max(1, ...types.map(t => t.n))
           const perDev = devs.filter(d => d.count).map(d => ({ name: d.name, size: d.size ?? 0, n: d.count })).sort((a, b) => b.size - a.size)
           const maxDev = Math.max(1, ...perDev.map(d => d.size))
-          const H = 'mb-3 flex items-baseline justify-between text-sm font-semibold text-navy'
-          const CARD = 'flex flex-col rounded-xl border border-line bg-card p-4 shadow-sm'
+          const H = 'mb-2 flex items-baseline justify-between text-sm font-semibold text-navy'
+          const CARD = 'flex flex-col rounded-xl border border-line bg-card p-3 shadow-sm'
           // toàn hệ thống: mọi vụ án (không chỉ vụ đang chọn)
           const sysKpis: [string, string, string][] = [
             ['Vụ án', (cases?.length ?? 0).toLocaleString('vi'), `${(cases ?? []).filter(c => c.count).length} vụ có dữ liệu`],
@@ -493,9 +493,9 @@ export default function Devices() {
             <section aria-label="Thống kê" className="mb-4 space-y-3">
               <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 {sysKpis.map(([k, v, sub]) => (
-                  <div key={k} className="rounded-xl border border-line bg-card px-5 py-4 shadow-sm">
+                  <div key={k} className="rounded-xl border border-line bg-card px-5 py-3 shadow-sm">
                     <dt className="text-sm font-medium text-muted">{k}</dt>
-                    <dd className="font-display text-4xl font-bold tabular-nums text-navy">{v}</dd>
+                    <dd className="font-display text-3xl font-bold tabular-nums text-navy">{v}</dd>
                     <dd className="mt-0.5 text-xs text-muted">{sub}</dd>
                   </div>
                 ))}
@@ -504,8 +504,8 @@ export default function Devices() {
               <div className={CARD}>
                 <p className={H}><span>Thiết bị theo trạng thái · vụ này</span><span className="text-xs text-muted">{cards.length} máy · {cards.filter(c => c.usb).length} đang cắm</span></p>
                 <div className="flex flex-1 items-center justify-around gap-4">
-                  <div className="relative h-44 w-44 shrink-0">
-                    <svg viewBox="0 0 36 36" className="h-44 w-44 -rotate-90" role="img"
+                  <div className="relative h-36 w-36 shrink-0">
+                    <svg viewBox="0 0 36 36" className="h-36 w-36 -rotate-90" role="img"
                       aria-label={status.map(s => `${s.label} ${s.n}`).join(', ')}>
                       <circle cx="18" cy="18" r="14" fill="none" strokeWidth="6" stroke="#f1f5f9" />
                       {status.map(s => {
@@ -517,7 +517,7 @@ export default function Devices() {
                       })}
                     </svg>
                     <span className="absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="font-display text-4xl font-bold text-navy tabular-nums">{cards.length}</span>
+                      <span className="font-display text-3xl font-bold text-navy tabular-nums">{cards.length}</span>
                       <span className="text-xs text-muted">thiết bị</span>
                     </span>
                   </div>
@@ -535,7 +535,7 @@ export default function Devices() {
 
               <div className={CARD}>
                 <p className={H}><span>Tệp theo loại · vụ này</span><span className="text-xs text-muted">{totalN.toLocaleString('vi')} tệp</span></p>
-                <ul className="flex flex-1 flex-col justify-between gap-1.5">
+                <ul className="flex flex-1 flex-col justify-between gap-1">
                   {!types.length && <li className="m-auto text-xs text-muted">Chưa có tệp trích xuất</li>}
                   {types.map(t => (
                     <li key={t.key} className="grid grid-cols-[7.5rem_1fr_4rem] items-center gap-2 text-xs"
@@ -552,15 +552,17 @@ export default function Devices() {
 
               <div className={CARD}>
                 <p className={H}><span>Dung lượng theo thiết bị · vụ này</span><span className="text-xs text-muted">{fmtSize(totalSize)}</span></p>
-                <ul className="flex flex-1 flex-col justify-around gap-2">
+                {/* 1 dòng/máy (tên | cột | dung lượng) như "Tệp theo loại": khối biểu đồ đủ thấp để trang không cuộn */}
+                <ul className="flex flex-1 flex-col justify-around gap-1">
                   {!perDev.length && <li className="m-auto text-xs text-muted">Chưa có dữ liệu thiết bị</li>}
                   {perDev.slice(0, 8).map(d => (
-                    <li key={d.name} className="text-xs" title={`${d.name}: ${fmtSize(d.size)} · ${d.n.toLocaleString('vi')} tệp`}>
-                      <span className="flex justify-between gap-2"><span className="truncate text-muted">{d.name}</span>
-                        <span className="shrink-0 font-semibold tabular-nums text-ink">{fmtSize(d.size)}</span></span>
-                      <span className="mt-1 block h-3.5 rounded-full bg-slate-100">
+                    <li key={d.name} className="grid grid-cols-[7.5rem_1fr_4rem] items-center gap-2 text-xs"
+                      title={`${d.name}: ${fmtSize(d.size)} · ${d.n.toLocaleString('vi')} tệp`}>
+                      <span className="truncate text-muted">{d.name}</span>
+                      <span className="h-3.5 rounded-full bg-slate-100">
                         <span className="block h-full rounded-full bg-primary" style={{ width: `${Math.max(1, (100 * d.size) / maxDev)}%` }} />
                       </span>
+                      <span className="text-right font-semibold tabular-nums text-ink">{fmtSize(d.size)}</span>
                     </li>
                   ))}
                   {perDev.length > 8 && <li className="text-[10px] text-muted">và {perDev.length - 8} thiết bị khác</li>}
@@ -571,21 +573,20 @@ export default function Devices() {
           )
         })()}
 
-        {/* Danh sách thiết bị: 10 thẻ/trang (5 cột x 2 hàng ở 1440px); di chuột/focus vào thẻ để xem chi tiết */}
+        {/* Danh sách thiết bị: 20 thẻ/trang = đúng 4 hàng x 5 cột, chia đều chiều cao còn lại; di chuột/focus vào thẻ để xem chi tiết */}
         {cards.length > 0 && (
           <h3 className="mb-2 flex items-baseline gap-2 font-display text-sm font-semibold text-navy">
             Danh sách thiết bị của vụ án <span className="text-primary">{caseName}</span>
             <span className="text-xs font-normal text-muted">({cards.length})</span>
           </h3>
         )}
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">
+        <div className="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 lg:grid-rows-[repeat(4,1fr)]">
           {cards.slice(pg * PAGE, (pg + 1) * PAGE).map((c, i) => {
             const st = states[`${caseName}\n${c.name}`]
             const stage: Stage = (st && st.stage !== 'new' ? st.stage : c.dev?.stage) ?? 'new'
             const isBusy = stage === 'imaging' || stage === 'extracting'
             const openable = stage === 'done' || stage === 'extracting' // đang trích xuất vẫn bấm vào xem phần đã trích được
             const unplugged = stage === 'new' && !c.usb
-            const sha = st?.image_sha256 ?? c.dev?.image_sha256
             const imageName = c.dev?.image_name || st?.image_name
             const serialDisplay = c.dev?.info?.serial || c.serial || c.usb?.serial || c.dev?.serial || null
             const isIos = c.usb ? !!c.usb.ios : (c.name.toLowerCase().includes('iphone') || c.name.toLowerCase().includes('ipad'))
@@ -612,7 +613,7 @@ export default function Devices() {
                 role={openable ? 'link' : undefined}
                 onClick={openable ? () => act(c, 'done') : undefined}
                 onKeyDown={openable ? e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); act(c, 'done') } } : undefined}
-                className={`card group relative flex flex-col gap-2 rounded-xl border-2 ${border} bg-card p-3 shadow-sm outline-none transition-all duration-150 hover:z-20 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-within:z-20 ${openable ? 'cursor-pointer' : ''}`}
+                className={`card group relative flex flex-col justify-center gap-2 rounded-xl border border-l-4 border-line ${border} bg-card p-3 shadow-sm outline-none transition-all duration-150 hover:z-20 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-within:z-20 ${openable ? 'cursor-pointer' : ''}`}
               >
                 {/* Thông tin cơ bản: ảnh/icon, tên, cắm cáp + hệ điều hành */}
                 <div className="flex items-center gap-2.5">
@@ -677,11 +678,13 @@ export default function Devices() {
                   {openable && <ChevronRight className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />}
                 </div>
 
-                {/* Chi tiết: hiện khi di chuột hoặc focus (bàn phím/chạm) vào thẻ; nằm trong thẻ nên rê chuột xuống vẫn giữ */}
+                {/* Chi tiết: hiện khi di chuột hoặc focus (bàn phím/chạm) vào thẻ; nằm trong thẻ nên rê chuột lên vẫn giữ.
+                    Mở lên trên: khung ẩn treo dưới hàng thẻ cuối kéo dài trang, sinh thanh cuộn.
+                    shortcut: cửa sổ quá thấp thì đầu khung có thể bị cắt ở mép trên vùng cuộn; khi đó cần tính hướng mở theo chỗ trống */}
                 <div
                   id={`dv-detail-${i}`}
                   onClick={e => e.stopPropagation()}
-                  className="invisible absolute left-0 right-0 top-full z-20 -mt-px space-y-1.5 rounded-b-xl border border-primary/40 bg-card p-3 text-xs opacity-0 shadow-lg transition-opacity duration-150 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+                  className="invisible absolute bottom-full left-0 right-0 z-20 -mb-px space-y-1.5 rounded-t-xl border border-primary/40 bg-card p-3 text-xs opacity-0 shadow-lg transition-opacity duration-150 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
                 >
                   {/* Phần chính: thông tin máy + dung lượng */}
                   <p className="font-display text-[13px] font-semibold text-navy">
@@ -760,19 +763,6 @@ export default function Devices() {
                     <span className="flex items-center gap-1"><Layers className="h-3 w-3 text-slate-400" aria-hidden="true" /> Tiếp nhận</span>
                     <span className="text-ink">{formatDateTime(c.dev?.created_at)}</span>
                   </div>
-                  {sha && (
-                    <div className="rounded-md border border-slate-200 bg-slate-50 p-2">
-                      <div className="mb-1 flex items-center justify-between">
-                        <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted">
-                          <ShieldCheck className="h-3 w-3 text-primary" aria-hidden="true" /> SHA-256
-                        </span>
-                        <button type="button" onClick={() => copyText(sha, `sha_${c.name}`)} className="text-[10px] font-medium text-primary hover:underline">
-                          {copiedKey === `sha_${c.name}` ? 'Đã sao chép ✓' : 'Sao chép'}
-                        </button>
-                      </div>
-                      <p className="select-all break-all font-mono text-[10px] leading-relaxed text-ink">{sha}</p>
-                    </div>
-                  )}
                   {isBusy && st && (
                     <div className="space-y-0.5 text-[10px] text-muted">
                       <div className="flex justify-between"><span>{st.files} tệp</span><span>{fmtSize(st.bytes)}</span></div>
