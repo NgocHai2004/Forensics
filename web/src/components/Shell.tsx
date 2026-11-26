@@ -42,7 +42,7 @@ export default function Shell() {
   return (
     <div className="flex min-h-screen">
       <aside className="sticky top-0 z-30 flex h-screen w-16 shrink-0 flex-col items-center border-r border-line bg-white">
-        <Link to="/" aria-label="Mobile Forensic - Tổng quan" className="flex h-14 w-full shrink-0 items-center justify-center border-b border-line">
+        <Link to="/" aria-label="Forensic Investigation - Tổng quan" className="flex h-14 w-full shrink-0 items-center justify-center border-b border-line">
           <Logo mark />
         </Link>
         <nav className="flex flex-1 flex-col items-center gap-2 py-3" aria-label="Điều hướng chính">

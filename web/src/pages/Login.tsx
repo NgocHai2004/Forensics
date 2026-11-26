@@ -172,8 +172,8 @@ export default function Login() {
 
           {/* Tiêu đề ứng dụng */}
           <h1 className="font-display text-4xl lg:text-[46px] font-bold tracking-tight text-white leading-tight">
-            <span>Mobile </span>
-            <span className="text-[#4a7dff]">Forensic</span>
+            <span>Forensic </span>
+            <span className="text-[#4a7dff]">Investigation</span>
           </h1>
 
           {/* Subtitle */}
@@ -260,7 +260,7 @@ export default function Login() {
 
         {/* Khung đăng nhập (Card) — Đã tăng kích thước rộng hơn, thoáng đãng và dễ nhìn hơn */}
         <div className="relative z-10 w-full max-w-[440px] sm:max-w-[460px] rounded-[28px] border border-slate-100/90 bg-white p-9 sm:p-11 shadow-[0_24px_60px_-12px_rgba(15,42,74,0.09),0_2px_8px_rgba(0,0,0,0.02)]">
-          {/* Header Card: Logo icon + Chữ MOBILE FORENSIC */}
+          {/* Header Card: Logo icon + Chữ FORENSIC INVESTIGATION */}
           <div className="mb-8 flex items-center justify-center gap-3.5">
             {/* Khiên navy + vân tay cyan */}
             <svg
@@ -296,10 +296,10 @@ export default function Login() {
             {/* Chữ thương hiệu 2 tầng lớn hơn */}
             <div className="flex flex-col">
               <span className="font-display text-[19px] sm:text-[20px] font-extrabold tracking-wider text-[#0f2a4a] leading-none">
-                MOBILE
+                FORENSIC
               </span>
               <span className="font-display text-[19px] sm:text-[20px] font-extrabold tracking-wider text-[#4a7dff] leading-none mt-1">
-                FORENSIC
+                INVESTIGATION
               </span>
             </div>
           </div>
@@ -443,7 +443,7 @@ export default function Login() {
             </div>
             <div className="mt-3 text-sm text-slate-600 space-y-2 leading-relaxed">
               <p>
-                Hệ thống <strong>Mobile Forensic</strong> dành riêng cho các điều tra viên và cán bộ được cấp quyền.
+                Hệ thống <strong>Forensic Investigation</strong> dành riêng cho các điều tra viên và cán bộ được cấp quyền.
               </p>
               <p>
                 Nếu bạn quên mật khẩu hoặc cần tạo tài khoản mới, vui lòng liên hệ quản trị viên hệ thống để được hỗ trợ.

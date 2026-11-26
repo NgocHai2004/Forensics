@@ -107,6 +107,19 @@ const VI: Record<string, string> = {
   'Tags: All': 'Thẻ: Tất cả',
   'Type a search term...': 'Nhập từ khoá tìm kiếm...',
   GO: 'TÌM',
+  // --- nhãn cố định trước đây viết cứng tiếng Anh ---
+  'FORENSIC INVESTIGATION': 'GIÁM ĐỊNH ĐIỀU TRA',
+  'Artifacts Categories': 'Danh mục dữ liệu',
+  Evidence: 'Chứng cứ',
+  PREVIEW: 'XEM TRƯỚC',
+  'DETAILS & ARTIFACT INFORMATION': 'CHI TIẾT & THÔNG TIN DỮ LIỆU',
+  'Message Sent Date/Time': 'Thời gian gửi',
+  'Time zone: GMT+7 (Hanoi, Bangkok)': 'Múi giờ: GMT+7 (Hà Nội, Băng Cốc)',
+  'Column view': 'Dạng bảng',
+  'Grid view': 'Dạng lưới ảnh',
+  'Conversation view': 'Dạng hội thoại',
+  'Phone contacts': 'Danh bạ điện thoại',
+  'SMS / MMS': 'Tin nhắn SMS / MMS',
 }
 
 // Provider cấp lang + t(). EN là mặc định (trả đúng chuỗi code), VI tra bảng ngược.

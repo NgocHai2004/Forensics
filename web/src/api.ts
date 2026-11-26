@@ -114,8 +114,42 @@ export interface SessionItem {
   status: 'running' | 'done' | 'error'; error: string | null
 }
 
+export interface DeviceAcqState {
+  running: boolean
+  case: string
+  device: string
+  serial: string | null
+  stage: 'new' | 'imaging' | 'imaged' | 'partial' | 'extracting' | 'done' | 'error'
+  phase: 'count' | 'pull' | 'package' | 'index' | 'ai' | null
+  files: number
+  total_files: number
+  bytes: number
+  total_bytes: number
+  pct: number
+  done: boolean
+  error: string | null
+  log: string
+  image_sha256: string | null
+  image_name: string | null
+}
+
 export type DeviceType = 'laptop' | 'hdd' | 'phone' | 'camera' | 'video' | 'other'
-export interface Device { name: string; type: DeviceType; note: string | null; created_at: string; count: number }
+export interface Device {
+  name: string; type: DeviceType; note: string | null; created_at: string; count: number
+  serial?: string | null                    // máy đã đóng image: serial để nhận lại khi cắm
+  stage?: 'new' | 'imaged' | 'partial' | 'done'  // suy từ dữ liệu: có gói image / trích xuất dở (bị ngắt) / xong
+  image_sha256?: string | null; image_name?: string | null
+  size?: number                             // tổng dung lượng dữ liệu đã trích xuất (byte)
+  raw_size?: number; raw_count?: number    // chưa trích xuất xong: dữ liệu thô đã thu về
+  index_run?: { status: 'running' | 'done' | 'error'; done: number; total: number; message: string | null } | null
+  info?: DeviceInfo                         // thông tin máy đọc từ dữ liệu đã thu
+}
+// Thông tin máy từ getprop/dumpsys (Android) hoặc ideviceinfo (iPhone) đã thu; storage_* = bộ nhớ máy (byte)
+export interface DeviceInfo {
+  name?: string | null; model?: string | null; os?: string | null; patch?: string | null; build?: string | null
+  serial?: string | null; sim?: string | null; imei?: string | null; phone?: string | null
+  storage_total?: number; storage_free?: number
+}
 
 // Ổ đĩa vật lý máy chủ (NVMe/M.2, SATA, USB) từ /sys/block — chỉ nhận diện, không đọc nội dung
 export interface DiskItem { name: string; size: number; model: string | null; serial: string | null; transport: string; partitions: number }
@@ -141,9 +175,14 @@ async function req<T>(url: string, body?: unknown): Promise<T> {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   })
   const data = await r.json().catch(() => ({}))
-  if (!r.ok) throw new ApiError(r.status, typeof data.detail === 'string' ? data.detail : `HTTP ${r.status}`)
+  if (!r.ok) throw new ApiError(r.status, typeof data.detail === 'string' ? data.detail : r.status >= 500 ? 'Máy chủ đang khởi động lại hoặc bận, thử lại sau giây lát' : `HTTP ${r.status}`)
   return data as T
 }
+
+// Bộ lọc tệp trên toàn bộ vụ án (server); giá trị rỗng/false thì bỏ khỏi URL
+export interface FileQuery { collection: string; device?: string; store?: string; cloud?: boolean; q?: string; date_from?: string; date_to?: string; src?: string }
+const fileQs = (p: FileQuery & { obj?: string; page?: number }) =>
+  new URLSearchParams(Object.entries(p).filter(([, v]) => v !== undefined && v !== '' && v !== false).map(([k, v]) => [k, String(v)]))
 
 export const api = {
   stats: () => req<Stats>('/api/stats'),
@@ -152,14 +191,26 @@ export const api = {
   createUser: (username: string, password: string) => req<User>('/api/users', { username, password }),
   login: (username: string, password: string) => req<{ username: string; open: boolean }>('/api/login', { username, password }),
   // Tải đủ mọi trang (server giới hạn 200/lần) để danh sách và số đếm khớp tổng thật của vụ án.
-  allFiles: async (collection: string) => {
-    const items: FileItem[] = []
-    for (let page = 1; ; page++) {
-      const r = await api.files({ collection, page, limit: 200 })
-      items.push(...r.items)
-      if (!r.items.length || items.length >= r.total) return items
+  // shortcut: chỉ tải 20.000 tệp mới nhất (149k tệp ~ 575 MB JSON làm treo trình duyệt); cần phân trang phía server nếu muốn duyệt hết
+  allFiles: async (collection: string, max = 20000) => {
+    const first = await api.files({ collection, page: 1, limit: 200 })
+    const items: FileItem[] = [...first.items]
+    const pages = Math.min(Math.ceil(first.total / 200), max / 200)
+    for (let p = 2; p <= pages; p += 6) {
+      const rs = await Promise.all(Array.from({ length: Math.min(6, pages - p + 1) }, (_, i) => api.files({ collection, page: p + i, limit: 200 })))
+      for (const r of rs) items.push(...r.items)
     }
+    return { items, total: first.total }
   },
+  fileObjects: (p: FileQuery) => req<Record<string, number>>(`/api/files/objects?${fileQs(p)}`),
+  fileApps: (collection: string, device?: string, cloud = false) =>
+    req<{ src: string; n: number; size: number; by: Record<string, [number, number]> }[]>(
+      `/api/files/apps?collection=${encodeURIComponent(collection)}${device ? `&device=${encodeURIComponent(device)}` : ''}${cloud ? '&cloud=true' : ''}`),
+  fileSources: (p: FileQuery & { obj?: string }) => req<[string, number][]>(`/api/files/sources?${fileQs(p)}`),
+  browseFiles: (p: FileQuery & { obj?: string; page: number }) => req<FilesPage>(`/api/files/browse?${fileQs(p)}`),
+  fileStats: (collection: string, device?: string, cloud = false) =>
+    req<{ by: Record<string, { n: number; size: number }>; n: number; size: number }>(
+      `/api/files/stats?collection=${encodeURIComponent(collection)}${device ? `&device=${encodeURIComponent(device)}` : ''}${cloud ? '&cloud=true' : ''}`),
   files: (p: { kind?: Kind; q?: string; page?: number; limit?: number; collection?: string; device?: string } = {}) => {
     const qs = new URLSearchParams()
     if (p.kind) qs.set('kind', p.kind)
@@ -184,7 +235,7 @@ export const api = {
     for (const f of files) fd.append('files', f, f.webkitRelativePath || f.name)
     const r = await fetch('/api/upload', { method: 'POST', body: fd })  // không đặt Content-Type để browser tự thêm boundary
     const data = await r.json().catch(() => ({}))
-    if (!r.ok) throw new ApiError(r.status, typeof data.detail === 'string' ? data.detail : `HTTP ${r.status}`)
+    if (!r.ok) throw new ApiError(r.status, typeof data.detail === 'string' ? data.detail : r.status >= 500 ? 'Máy chủ đang khởi động lại hoặc bận, thử lại sau giây lát' : `HTTP ${r.status}`)
     return data as { saved: number; folder: string; status: 'started' }
   },
   cases: () => req<Case[]>('/api/cases'),
@@ -192,10 +243,15 @@ export const api = {
   updateCase: (name: string, newName: string, note: string) => req<Case>('/api/cases/update', { name, new_name: newName, note: note || null }),
   deleteCase: (name: string) => req<{ deleted: number; trashed: number; trash: string | null }>('/api/cases/delete', { name }),
   devices: (c: string) => req<{ items: Device[]; unassigned: number }>(`/api/devices?case=${encodeURIComponent(c)}`),
-  usb: () => req<{ items: { type: DeviceType; name: string; model?: string | null; serial?: string | null; usb_id?: string | null; ios?: boolean }[] }>('/api/usb'),
+  // adb: 'device' sẵn sàng | 'unauthorized' chờ cho phép | 'offline' | null = chưa bật gỡ lỗi USB (chỉ sạc/MTP)
+  usb: () => req<{ items: { type: DeviceType; name: string; model?: string | null; serial?: string | null; usb_id?: string | null; ios?: boolean; adb?: string | null }[] }>('/api/usb'),
   disks: () => req<{ disks: DiskItem[] }>('/api/disk'),
   phoneSim: (serial?: string) => req<{ serial: string; props: Record<string, string> }>(`/api/phone/sim${serial ? `?serial=${encodeURIComponent(serial)}` : ''}`),
   phoneStatus: () => req<PhoneStatus>('/api/phone/status'),
+  deviceStatus: () => req<{ items: DeviceAcqState[] }>('/api/device/status'),
+  deviceEstimate: (serial: string) => req<{ bytes: number; files: number | null }>(`/api/device/estimate?serial=${encodeURIComponent(serial)}`),
+  deviceImage: (c: string, device: string, serial?: string) => req<{ status: 'started'; serial: string }>('/api/device/image', { case: c, device, serial: serial || null }),
+  deviceExtract: (c: string, device: string) => req<{ status: 'started' }>('/api/device/extract', { case: c, device }),
   pull: (c: string, device: string, serial?: string) => req<{ status: 'started'; serial: string }>('/api/pull', { case: c, device, serial: serial || null }),
   pullStatus: () => req<{ running: boolean; device: string | null; phase: 'count' | 'pull' | 'index' | null; files: number; total_files: number; bytes: number; total_bytes: number; pct: number; done: boolean; error: string | null; log: string; index?: { status: string; done: number; total: number } }>('/api/pull/status'),
   createDevice: (c: string, name: string, type: DeviceType) => req<Device>('/api/devices', { case: c, name, type }),

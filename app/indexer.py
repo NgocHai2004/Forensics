@@ -25,6 +25,9 @@ from datetime import datetime, timedelta
 from io import BytesIO, StringIO
 
 from PIL import Image, ImageOps
+from pillow_heif import register_heif_opener
+
+register_heif_opener()  # ảnh iPhone HEIC/HEIF: Pillow không tự đọc được (trước đây lỗi UnidentifiedImageError)
 
 Image.MAX_IMAGE_PIXELS = 40_000_000  # ảnh điện thoại < 50 Mpx; chặn decompression bomb (image_meta raise khi vượt)
 
@@ -46,6 +49,10 @@ MAX_TEXT = 50000  # ký tự lưu vào files.text_content
 MAX_EXTRACT = 2_000_000  # ponytail: tối đa 2M ký tự/file vào chunks; nâng nếu có tài liệu lớn hơn cần hỏi
 MAX_OCR_PAGES = 50
 MAX_FRAMES = 30
+AI_MIN_SIDE = 256  # ảnh có cạnh dài <= 256px (icon, sticker, avatar) không gọi AI
+# giai đoạn 2 làm trước: ảnh camera, ảnh chụp màn hình, ảnh/tệp nhận qua app chat
+AI_FIRST = ("%/dcim/%", "%screenshot%", "%/pictures/%", "%zalo%", "%telegram%", "%whatsapp%", "%messenger%")
+VIDEO_SIZE = re.compile(r"Stream #.*?Video: .*?\b(\d{2,5})x(\d{2,5})\b")
 ASR_URL = os.environ.get("ASR_URL", "http://asr:9001")
 CONVERT_URL = os.environ.get("CONVERT_URL", "http://convert:9002")
 # dịch vụ asr/convert xử lý tuần tự: xếp hàng ở đây để timeout của client chỉ tính thời gian server làm việc
@@ -62,8 +69,25 @@ APP_DIRS = {d.lower(): d for d in "Zalo Messenger Facebook Telegram Threads What
 
 
 # thùng rác (ảnh đã xoá) và .thumbnails (ảnh thu nhỏ còn lại sau khi ảnh gốc bị xoá) là chứng cứ -> quét
-SKIP_DIRS = {".git", ".svn", "__macosx", "system volume information"}
+# _ios_backup: file tên hash, được index qua cây _ios_files có tên thật (main._ios_files)
+SKIP_DIRS = {".git", ".svn", "__macosx", "system volume information", "_ios_backup"}
 SKIP_FILES = {".nomedia", ".ds_store", "thumbs.db", "desktop.ini"}
+
+# Cache ứng dụng (Android/data/<pkg>/cache, code_cache, semicache của Zalo, spotifycache...): file tạm, rất nhiều,
+# ít giá trị. Vẫn lập chỉ mục (tên, hash, EXIF, thumbnail) để khớp với image, nhưng KHÔNG gửi AI mô tả / ASR
+# -> tiết kiệm hàng giờ GPU. Telegram lưu ảnh/video nhận được trong cache -> vẫn mô tả.
+# INDEX_AI_CACHE=1 để mô tả cả cache.
+CACHE_DIRS = {"cache", "code_cache", ".cache"}
+KEEP_CACHE_APPS = {"org.telegram.messenger"}
+AI_SKIP_CACHE = os.environ.get("INDEX_AI_CACHE", "0") != "1"
+
+
+def is_cache_path(path):
+    """True nếu file nằm trong thư mục cache ứng dụng (xem CACHE_DIRS), trừ app trong KEEP_CACHE_APPS."""
+    parts = path.replace("\\", "/").lower().split("/")[:-1]
+    if any(a in parts for a in KEEP_CACHE_APPS):
+        return False
+    return any(p in CACHE_DIRS or p.endswith("cache") for p in parts)
 
 
 def app_of(path):
@@ -151,10 +175,14 @@ def init_db(db_path):
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
     cols = [r[1] for r in conn.execute("PRAGMA table_info(files)")]
-    for col in ("collection", "device"):  # DB cũ v1 thiếu collection; DB trước khi có thiết bị thiếu device
+    # DB cũ v1 thiếu collection; DB trước khi có thiết bị thiếu device;
+    # ai_pending (trích xuất 2 giai đoạn): 1 = còn chờ AI/ASR/chuyển đổi, 0 = đã làm giai đoạn 2, NULL = không cần
+    for col, typ in (("collection", "TEXT"), ("device", "TEXT"), ("ai_pending", "INTEGER")):
         if col not in cols:
-            conn.execute(f"ALTER TABLE files ADD COLUMN {col} TEXT")
+            conn.execute(f"ALTER TABLE files ADD COLUMN {col} {typ}")
             conn.commit()
+    conn.execute("CREATE INDEX IF NOT EXISTS files_ai_pending ON files(collection, device) WHERE ai_pending = 1")
+    conn.execute("CREATE INDEX IF NOT EXISTS files_sha256 ON files(sha256)")
     if conn.execute("PRAGMA user_version").fetchone()[0] < 1:  # DB trước khi có chunks: xử lý lại một lần
         with conn:  # idempotent (NOT EXISTS / error IS NULL) nên 2 tiến trình cùng chạy cũng không sao
             conn.execute(  # ảnh đã có caption: tạo chunk từ caption sẵn có, không gọi lại LLM
@@ -503,8 +531,16 @@ def describe(llm, jpeg, fails):
         fails.append(f"{type(e).__name__}: {e}")
 
 
-def pdf_chunks(path, llm, fails):
-    """Trang có chữ -> source 'text'; trang scan (< 20 ký tự) -> render -> describe_image -> 'ocr'. loc "trang N"."""
+def same_image(conn, sha):
+    """Ảnh trùng nội dung (cùng SHA-256) đã có kết quả AI -> dùng lại, không gọi LLM lần nữa."""
+    r = conn.execute("SELECT caption, ocr_text, tags FROM files WHERE sha256 = ? AND kind = 'image' "
+                     "AND caption IS NOT NULL AND error IS NULL LIMIT 1", (sha,)).fetchone()
+    return r and {"caption": r[0], "ocr_text": r[1] or "", "tags": json.loads(r[2] or "[]")}
+
+
+def pdf_chunks(path, llm, fails, defer=None):
+    """Trang có chữ -> source 'text'; trang scan (< 20 ký tự) -> render -> describe_image -> 'ocr'. loc "trang N".
+    llm=None (giai đoạn 1): không mô tả trang scan, ghi loc của chúng vào `defer` để giai đoạn 2 làm."""
     # chạy dạng module (-m) từ thư mục cha của package để `from .db import` ở đầu file vẫn hợp lệ trong tiến trình con
     r = subprocess.run([sys.executable, "-m", f"{__package__}.{os.path.splitext(os.path.basename(__file__))[0]}", "--pdf", path],
                        capture_output=True, timeout=PDF_TIMEOUT, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -513,7 +549,9 @@ def pdf_chunks(path, llm, fails):
     pages, scans = pickle.loads(r.stdout)  # dữ liệu từ chính tiến trình con của mình
     chunks = group(pages, "text", merge=False)
     for loc, jpeg in scans:
-        if d := describe(llm, jpeg, fails):
+        if llm is None:
+            defer.append(loc)
+        elif d := describe(llm, jpeg, fails):
             chunks.append((loc, "ocr", f"{d['caption']}\n{d['ocr_text']}".strip()))
     return sorted(chunks, key=lambda c: int(c[0].split()[1]))
 
@@ -528,7 +566,7 @@ def video_frames(path):
              "select='eq(n,0)+gt(scene,0.3)',showinfo,scale=1024:1024:force_original_aspect_ratio=decrease",
              "-fps_mode", "vfr", "-frames:v", "300", "-q:v", "3", os.path.join(tmp, "%04d.jpg")],
             capture_output=True, text=True, errors="replace", timeout=1800)
-        size = re.search(r"Stream #.*?Video: .*?\b(\d{2,5})x(\d{2,5})\b", r.stderr)
+        size = VIDEO_SIZE.search(r.stderr)
         times = [float(t) for t in re.findall(r"\bpts_time:\s*(-?[\d.]+)", r.stderr)]
         frames, last = [], None
         for t, name in zip(times, sorted(os.listdir(tmp))):
@@ -541,7 +579,17 @@ def video_frames(path):
     return (int(size[1]), int(size[2])) if size else (None, None), frames
 
 
-def scan(folder, data_dir, progress=None, collection=None, device=None):
+def video_thumb(path, thumb_path):
+    """Giai đoạn 1 (không AI): khung đầu làm thumbnail 320px -> ((width, height), có thumbnail không)."""
+    r = subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", "-i", path, "-frames:v", "1", "-vf",
+                        "scale=320:320:force_original_aspect_ratio=decrease", "-y", thumb_path],
+                       capture_output=True, text=True, errors="replace", timeout=120)
+    size = VIDEO_SIZE.search(r.stderr)
+    return ((int(size[1]), int(size[2])) if size else (None, None)), os.path.isfile(thumb_path)
+
+
+def scan(folder, data_dir, progress=None, collection=None, device=None, ai=True):
+    # ai=False: giai đoạn 1 của trích xuất thiết bị (không gọi AI/ASR/chuyển đổi), xem index_one
     from . import llm
 
     conn = init_db(os.path.join(data_dir, "index.db"))
@@ -566,15 +614,9 @@ def scan(folder, data_dir, progress=None, collection=None, device=None):
                       if stat.S_ISREG(os.lstat(p).st_mode)]
         total = len(paths)
         run(total=total)
-        local, conns = threading.local(), []
-
-        def work(path):  # mỗi worker một connection SQLite riêng (connection không dùng chung giữa thread)
-            if not hasattr(local, "conn"):
-                local.conn = init_db(os.path.join(data_dir, "index.db"))
-                conns.append(local.conn)
-            c = local.conn
+        def work(c, path):
             try:
-                return index_one(c, llm, path, data_dir, collection, device)
+                return index_one(c, llm, path, data_dir, collection, device, ai)
             except Exception as e:  # file khóa, path > 260 ký tự, mtime lỗi... -> ghi lỗi, đi tiếp
                 c.rollback()
                 ext = os.path.splitext(path)[1][1:].lower()
@@ -586,21 +628,18 @@ def scan(folder, data_dir, progress=None, collection=None, device=None):
                 return False
 
         # ponytail: song song theo file (thời gian chủ yếu chờ LLM/ASR); ghi SQLite vẫn tuần tự nhờ khóa WAL
-        with ThreadPoolExecutor(max(1, int(os.environ.get("INDEX_WORKERS", "1")))) as pool:
-            results = pool.map(work, paths)
-            for done, ok in enumerate(results, 1):
-                processed += ok
-                if progress:
-                    progress(done, total)
-                if done % 5 == 0:
-                    run(done=done)
-        for c in conns:
-            c.close()
-        try:  # embedding cho chunk mới; Ollama lỗi / chưa có retrieval.py -> lần scan sau embed tiếp
-            from . import retrieval
-            retrieval.embed_pending(conn)
-        except Exception as e:
-            print(f"embed_pending lỗi: {type(e).__name__}: {e}")
+        for done, ok in enumerate(_pool(data_dir, paths, work), 1):
+            processed += ok
+            if progress:
+                progress(done, total)
+            if done % 5 == 0:
+                run(done=done)
+        if ai:  # giai đoạn 1 (ai=False): embedding do luồng AI nền làm (main._ai_loop), không bắt người dùng chờ
+            try:  # embedding cho chunk mới; Ollama lỗi / chưa có retrieval.py -> lần scan sau embed tiếp
+                from . import retrieval
+                retrieval.embed_pending(conn)
+            except Exception as e:
+                print(f"embed_pending lỗi: {type(e).__name__}: {e}")
         run(done=total, status="done", finished_at=now())
     except Exception as e:
         run(status="error", message=f"{type(e).__name__}: {e}"[:500], finished_at=now())
@@ -608,12 +647,66 @@ def scan(folder, data_dir, progress=None, collection=None, device=None):
     return processed
 
 
-def index_one(conn, llm, path, data_dir, collection=None, device=None):
-    """Index một file; trả True nếu xử lý, False nếu không đổi (file lỗi lần trước sẽ được thử lại)."""
+def _pool(data_dir, paths, fn):
+    """fn(conn, path) cho từng path, INDEX_WORKERS luồng song song, mỗi luồng một connection SQLite riêng
+    (connection không dùng chung giữa thread); trả kết quả theo thứ tự paths."""
+    local, conns = threading.local(), []
+
+    def work(path):
+        if not hasattr(local, "conn"):
+            local.conn = init_db(os.path.join(data_dir, "index.db"))
+            conns.append(local.conn)
+        return fn(local.conn, path)
+    try:
+        with ThreadPoolExecutor(max(1, int(os.environ.get("INDEX_WORKERS", "1")))) as pool:
+            yield from pool.map(work, paths)
+    finally:
+        for c in conns:
+            c.close()
+
+
+def ai_queue(conn):
+    """[(vụ án, thiết bị)] còn tệp chờ giai đoạn 2; máy xong giai đoạn 1 trước làm trước."""
+    return [tuple(r) for r in conn.execute(
+        "SELECT collection, device FROM files WHERE ai_pending = 1 GROUP BY collection, device ORDER BY MIN(id)")]
+
+
+def ai_pass(data_dir, collection, device, progress=None):
+    """Giai đoạn 2 cho một máy: AI mô tả ảnh/OCR, ASR, chuyển đổi tài liệu cho tệp ai_pending = 1; ảnh camera,
+    ảnh chụp màn hình, ảnh/tệp app chat làm trước. progress(xong, tổng). Trả số tệp đã xử lý."""
+    from . import llm
+    conn = init_db(os.path.join(data_dir, "index.db"))
+    w = "collection IS ? AND device IS ?"
+    prio = " OR ".join(["path LIKE ?"] * len(AI_FIRST))
+    paths = [r[0] for r in conn.execute(
+        f"SELECT path FROM files WHERE {w} AND ai_pending = 1 ORDER BY CASE WHEN {prio} THEN 0 ELSE 1 END, "
+        "COALESCE(taken_at, mtime) DESC", (collection, device, *AI_FIRST))]
+    total = conn.execute(f"SELECT COUNT(*) FROM files WHERE {w} AND ai_pending IS NOT NULL", (collection, device)).fetchone()[0]
+    conn.close()
+
+    def work(c, path):
+        try:
+            return index_one(c, llm, path, data_dir, collection, device, ai=True, force=True)
+        except Exception as e:  # tệp mất/không đọc được: ghi lỗi, bỏ khỏi hàng chờ (lần trích xuất sau thử lại)
+            c.rollback()
+            c.execute("UPDATE files SET ai_pending = 0, error = ? WHERE path = ?", (f"{type(e).__name__}: {e}"[:500], path))
+            c.commit()
+            return False
+
+    for i, _ in enumerate(_pool(data_dir, paths, work), 1):
+        if progress:
+            progress(total - len(paths) + i, total)
+    return len(paths)
+
+
+def index_one(conn, llm, path, data_dir, collection=None, device=None, ai=True, force=False):
+    """Index một file; trả True nếu xử lý, False nếu không đổi (file lỗi lần trước sẽ được thử lại).
+    ai=False (giai đoạn 1): hash, metadata, ảnh thu nhỏ, văn bản; việc nặng (AI, ASR, chuyển đổi) đánh dấu ai_pending=1.
+    force=True (giai đoạn 2): làm lại đầy đủ kể cả khi tệp không đổi."""
     st = os.stat(path)
     mtime = datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")
-    if conn.execute("SELECT 1 FROM files WHERE path=? AND size=? AND mtime=? AND error IS NULL",
-                    (path, st.st_size, mtime)).fetchone():
+    if not force and conn.execute("SELECT 1 FROM files WHERE path=? AND size=? AND mtime=? AND error IS NULL",
+                                  (path, st.st_size, mtime)).fetchone():
         return False
     name = os.path.basename(path)
     ext = os.path.splitext(name)[1][1:].lower()
@@ -634,14 +727,28 @@ def index_one(conn, llm, path, data_dir, collection=None, device=None):
     # error tạm 'đang index' bảo đảm nếu dừng giữa chừng, lần scan sau vẫn thử lại
     conn.commit()
     chunks, thumb, fails = [], f"thumbs/{fid}.jpg", []  # fails: khung/trang scan mô tả lỗi, bỏ qua từng cái
+    pending = False  # còn việc nặng cho giai đoạn 2
+    no_ai = AI_SKIP_CACHE and kind in ("image", "audio", "video") and is_cache_path(path)
     try:
         if kind == "image":
             row["width"], row["height"], row["taken_at"], row["lat"], row["lon"], jpeg =                 image_meta(path, os.path.join(data_dir, thumb))
             row["thumb"] = thumb
-            d = llm.describe_image(jpeg)
-            row["caption"], row["ocr_text"] = d["caption"], d["ocr_text"]
-            row["tags"] = json.dumps(d["tags"], ensure_ascii=False)
-            chunks = [(None, "image", f"{d['caption']}\n{d['ocr_text']}")]
+            if no_ai:
+                row["tags"] = '["cache"]'  # tìm được theo tag; không có caption/OCR
+            elif not ai:
+                pending = max(row["width"], row["height"]) > AI_MIN_SIDE
+            else:
+                d = same_image(conn, row["sha256"]) or llm.describe_image(jpeg)
+                row["caption"], row["ocr_text"] = d["caption"], d["ocr_text"]
+                row["tags"] = json.dumps(d["tags"], ensure_ascii=False)
+                chunks = [(None, "image", f"{d['caption']}\n{d['ocr_text']}")]
+        elif no_ai:
+            row["tags"] = '["cache"]'  # audio/video trong cache (stream tạm của app): không ASR, không khung hình
+        elif not ai and (kind in ("audio", "video") or ext in CONVERT_EXTS):
+            pending = True  # ASR, mô tả khung hình, chuyển đổi tài liệu cũ: giai đoạn 2
+            if kind == "video":
+                (row["width"], row["height"]), ok = video_thumb(path, os.path.join(data_dir, thumb))
+                row["thumb"] = thumb if ok else None
         elif kind in ("audio", "video"):
             # ponytail: ASR cả file một lần (timeout 30 phút); file dài hơn ~vài giờ cần cắt đoạn phía ASR
             segs = post(f"{ASR_URL}/transcribe", {"path": path}, 1800, ASR_LOCK)["segments"]
@@ -673,7 +780,9 @@ def index_one(conn, llm, path, data_dir, collection=None, device=None):
         elif ext in TEXT_EXTS:
             chunks = group([(None, read_text(path))], "text", merge=False)
         elif ext == "pdf":
-            chunks = pdf_chunks(path, llm, fails)
+            scans = []
+            chunks = pdf_chunks(path, llm if ai else None, fails, scans)
+            pending = bool(scans)  # trang scan chờ AI ở giai đoạn 2
         elif ext in CONVERT_EXTS or ext in OFFICE_PARTS:
             src = post(f"{CONVERT_URL}/convert", {"path": path}, 180, CONVERT_LOCK)["path"] if ext in CONVERT_EXTS else path
             sub = os.path.splitext(src)[1][1:].lower()
@@ -694,8 +803,8 @@ def index_one(conn, llm, path, data_dir, collection=None, device=None):
     conn.execute(
         "UPDATE files SET taken_at=:taken_at, lat=:lat, lon=:lon, width=:width, height=:height, "
         "caption=:caption, ocr_text=:ocr_text, tags=:tags, text_content=:text_content, "
-        "thumb=:thumb, error=:error, collection=COALESCE(:collection, collection), device=COALESCE(:device, device) "
-        "WHERE id=:id", {**row, "id": fid})
+        "thumb=:thumb, error=:error, collection=COALESCE(:collection, collection), device=COALESCE(:device, device), "
+        "ai_pending=:ai_pending WHERE id=:id", {**row, "id": fid, "ai_pending": 1 if pending else (0 if force else None)})
     set_chunks(conn, fid, chunks)
     conn.commit()
     return True
@@ -1059,6 +1168,8 @@ elif __name__ == "__main__":
         fails = []
         assert pdf_chunks(os.path.join(tmp, "scan.pdf"), flaky, fails) == [("trang 1", "ocr", "ảnh thử nghiệm có xe máy\nHELLO")]
         assert fails == ["ZeroDivisionError: division by zero"]
+        later = []  # giai đoạn 1: trang scan không gọi AI, ghi lại để giai đoạn 2 làm
+        assert pdf_chunks(os.path.join(tmp, "scan.pdf"), None, [], later) == [] and later == ["trang 1", "trang 2"]
         with open(os.path.join(tmp, "hong.pdf"), "wb") as f:
             f.write(b"%PDF-1.4 broken")
         try:
@@ -1106,5 +1217,34 @@ elif __name__ == "__main__":
         assert q("SELECT collection FROM files WHERE path=?", os.path.join(ev, "doc.jpg")) == [("A",)]
         assert q("SELECT MIN(c.id) FROM chunks c JOIN files f ON f.id=c.file_id WHERE f.path=?",
                  os.path.join(ev, "doc.jpg"))[0][0] > max_id, "AUTOINCREMENT: id mới, không tái dùng"
+        conn.close()
+    # trích xuất 2 giai đoạn: giai đoạn 1 không gọi AI, ảnh nhỏ (<= 256px) không chờ AI, video có thumbnail ngay;
+    # giai đoạn 2 chạy AI cho tệp chờ, ảnh DCIM làm trước, ảnh trùng SHA-256 dùng lại kết quả (không gọi LLM lần 2)
+    os.environ["INDEX_WORKERS"] = "1"  # thứ tự xác định: a.jpg (DCIM, ưu tiên) xong trước b.jpg trùng nội dung
+    with tempfile.TemporaryDirectory() as tmp:
+        src, data = os.path.join(tmp, "src"), os.path.join(tmp, "data")
+        os.makedirs(os.path.join(src, "DCIM"))
+        Image.new("RGB", (800, 600), "red").save(os.path.join(src, "DCIM", "a.jpg"))
+        shutil.copy(os.path.join(src, "DCIM", "a.jpg"), os.path.join(src, "b.jpg"))
+        Image.new("RGB", (100, 100), "blue").save(os.path.join(src, "icon.png"))
+        if has_ff:
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=red:s=320x240:d=1:r=5",
+                            os.path.join(src, "v.mp4")], check=True, timeout=60)
+        n = 3 if has_ff else 2
+        calls = []
+        sys.modules["app.llm"].describe_image = lambda b: calls.append(1) or fake_d
+        assert scan(src, data, collection="C", device="D", ai=False) == n + 1 and calls == []
+        conn = init_db(os.path.join(data, "index.db"))
+        assert dict(q("SELECT name, ai_pending FROM files")) == \
+            {"a.jpg": 1, "b.jpg": 1, "icon.png": None} | ({"v.mp4": 1} if has_ff else {})
+        if has_ff:
+            assert q("SELECT width, height, thumb IS NOT NULL FROM files WHERE name='v.mp4'") == [(320, 240, 1)]
+        assert ai_queue(conn) == [("C", "D")]
+        seen = []
+        assert ai_pass(data, "C", "D", lambda d, t: seen.append((d, t))) == n and seen[-1] == (n, n), seen
+        assert len(calls) == (2 if has_ff else 1), f"b.jpg trùng a.jpg phải dùng lại kết quả AI: {calls}"
+        assert q("SELECT name, ai_pending, caption FROM files WHERE name IN ('a.jpg', 'b.jpg') ORDER BY name") == \
+            [("a.jpg", 0, "c"), ("b.jpg", 0, "c")]
+        assert ai_queue(conn) == [] and scan(src, data, collection="C", device="D", ai=False) == 0
         conn.close()
     print("OK" + ("" if has_ff else " (bỏ qua video: không có ffmpeg)"))

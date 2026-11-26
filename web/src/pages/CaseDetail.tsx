@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
@@ -12,7 +12,6 @@ import {
   Rows3,
   Play,
   Download,
-  FileText,
   HardDrive,
   Image as ImageIcon,
   Layers,
@@ -32,7 +31,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { api, fmtSize } from '../api'
-import type { Device, DeviceType, FileItem, Graph, PackageItem } from '../api'
+import type { Device, DeviceType, FileItem, FilesPage, Graph, PackageItem } from '../api'
 import { graphHtml } from '../graphHtml'
 import { useI18n } from '../i18n'
 import { logout } from '../auth'
@@ -73,14 +72,75 @@ const DEVICE_LABELS: Record<DeviceType, string> = {
   other: 'Other',
 }
 
+// Loại tệp kiểu màn Lưu trữ Samsung. Màu theo thứ tự cố định (bảng màu đã kiểm mù màu), "Khác" màu trung tính.
+const STORE = [
+  { key: 'chat', label: 'Tin nhắn', color: '#0ea5e9' },
+  { key: 'image', label: 'Hình ảnh', color: '#2a78d6' },
+  { key: 'video', label: 'Video', color: '#eb6834' },
+  { key: 'audio', label: 'Âm thanh', color: '#1baf7a' },
+  { key: 'document', label: 'Tài liệu', color: '#eda100' },
+  { key: 'archive', label: 'Tệp nén', color: '#e87ba4' },
+  { key: 'apk', label: 'Tệp cài đặt', color: '#008300' },
+  { key: 'appdata', label: 'Dữ liệu ứng dụng', color: '#6250d6' },
+  { key: 'system', label: 'Hệ thống', color: '#e34948' },
+  { key: 'other', label: 'Khác', color: '#9ca3af' },
+] as const
+type StoreKey = (typeof STORE)[number]['key']
+// Tệp của app đồng bộ cloud trên máy (Mi Cloud, iCloud Drive, Google Drive/Photos, Dropbox, OneDrive). Khớp _CLOUD_SQL ở main.py
+const CLOUD_RE = /cloud|dropbox|onedrive|skydrive|mobile documents|com\.google\.android\.apps\.(docs|photos)/i
+const ARCHIVE = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz'])
+const APPDATA = new Set(['sqlite', 'sqlite3', 'db', 'plist', 'json', 'xml'])
+// Thứ tự quy tắc: dữ liệu hệ thống (AndroidQF) > apk > tệp nén > dữ liệu ứng dụng > loại gốc của indexer
+// Loại tin trong khung chat (nhãn do main._zalo_export ghi đầu nội dung)
+const MSG_KINDS: [string, string][] = [['', 'Tất cả'], ['text', 'Chữ'], ['[Ảnh]', 'Ảnh'], ['[Video]', 'Video'], ['[Tin nhắn thoại]', 'Thoại'],
+  ['[Tệp]', 'Tệp'], ['[Liên kết]', 'Liên kết'], ['[Vị trí]', 'Vị trí'], ['[Sticker]', 'Sticker'], ['[Danh thiếp]', 'Danh thiếp']]
+const msgKindOf = (t: string) => MSG_KINDS.find(([k]) => k && k !== 'text' && t.startsWith(k))?.[0] ?? (t.startsWith('[') ? 'other' : 'text')
+// Avatar chữ cái + màu cố định theo tên (khung chat kiểu Zalo)
+const initials = (n: string) => (n.replace(/^(ID|Nhóm)\s+/, '').trim().split(/\s+/).slice(-2).map((w) => w[0]).join('') || '?').toUpperCase()
+const avatarColor = (n: string) => `hsl(${[...n].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7)} 55% 45%)`
+const storeOf = (f: FileItem): StoreKey => {
+  const ext = f.ext.toLowerCase().replace(/^\./, '')
+  if (f.path.includes('/_chat/')) return 'chat'
+  if (f.path.includes('/_aqf/') || f.name === 'sim.txt') return 'system'
+  if (ext === 'apk') return 'apk'
+  if (ARCHIVE.has(ext)) return 'archive'
+  if (APPDATA.has(ext)) return 'appdata'
+  return f.kind
+}
+
+// Nhóm đối tượng kiểu app Ảnh iPhone. Server phân nhóm (OBJ_KW trong app/main.py), đếm và lọc trên toàn bộ ảnh/video của vụ án.
+const OBJ: { key: string; label: string }[] = [
+  { key: 'person', label: 'Người' },
+  { key: 'vehicle', label: 'Phương tiện' },
+  { key: 'qr', label: 'Mã QR' },
+  { key: 'paper', label: 'Giấy tờ' },
+  { key: 'money', label: 'Tiền & giao dịch' },
+  { key: 'screen', label: 'Màn hình ứng dụng' },
+  { key: 'gps', label: 'Có vị trí' },
+  { key: 'text', label: 'Có chữ' },
+  { key: 'other', label: 'Khác' },
+]
+
+const fileMeta = (f: FileItem) => ({
+  'File name': f.name,
+  'Seized device': f.device || 'Unassigned device',
+  'Size': fmtSize(f.size),
+  'Modified time': f.mtime.replace('T', ' '),
+  'SHA-256 hash': f.sha256,
+  'Original path': f.path,
+  'AI description': f.caption || null,
+  'OCR text': f.ocr_text || null,
+})
+
 export default function CaseDetail() {
   const name = useParams().name ?? ''
-  const [sp, setSp] = useSearchParams()
+  const [sp] = useSearchParams()
   const activeDevice = sp.get('device') ?? ''
 
   // Dữ liệu vụ án
   const [devs, setDevs] = useState<{ items: Device[]; unassigned: number } | null>(null)
   const [files, setFiles] = useState<FileItem[]>([])
+  const [fileTotal, setFileTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
 
@@ -113,8 +173,10 @@ export default function CaseDetail() {
   // Bộ lọc nâng cao: khoảng ngày, người vật, chỉ hiện bản ghi có QR
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [person, setPerson] = useState('all')
-  const [qrOnly, setQrOnly] = useState('all')
+  const [obj, setObj] = useState('all')
+  // Trang tệp lấy từ server khi lọc theo loại tệp/đối tượng (nạp dần 200 tệp/lần)
+  const [srv, setSrv] = useState<FilesPage | null>(null)
+  const [srvBusy, setSrvBusy] = useState(false)
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'column' | 'conversation' | 'grid'>('column')
   const nextView = VIEWS[(VIEWS.indexOf(viewMode) + 1) % VIEWS.length]
@@ -149,7 +211,8 @@ export default function CaseDetail() {
         api.allFiles(name),
       ])
       setDevs(d)
-      setFiles(f)
+      setFiles(f.items)
+      setFileTotal(f.total)
     } catch (e) {
       setErr(e instanceof Error ? e.message : t('Cannot load case data'))
     } finally {
@@ -162,29 +225,49 @@ export default function CaseDetail() {
   }, [name])
 
   // Trích xuất các tệp chứng cứ thực tế thành các Artifacts chuẩn Magnet AXIOM
-  const artifacts = useMemo<ArtifactItem[]>(() => {
+  const buildArtifacts = useCallback((files: FileItem[]): ArtifactItem[] => {
     const list: ArtifactItem[] = []
 
     for (const f of files) {
       const devName = f.device || 'Unassigned device'
-      const baseMeta = {
-        'File name': f.name,
-        'Seized device': devName,
-        'Size': fmtSize(f.size),
-        'Modified time': f.mtime.replace('T', ' '),
-        'SHA-256 hash': f.sha256,
-        'Original path': f.path,
-        'AI description': f.caption || null,
-        'OCR text': f.ocr_text || null,
-      }
+      const baseMeta = fileMeta(f)
 
       // 1. Tin nhắn SMS / Zalo / Chat
       if (
+        f.path.includes('/_chat/') ||
         f.name.toLowerCase().includes('tin_nhan') ||
         f.name.toLowerCase().includes('sms') ||
         f.name.toLowerCase().includes('chat') ||
         f.name.toLowerCase().includes('zalo')
       ) {
+        // Hội thoại xuất từ CSDL app (main._zalo_export): một tệp = một cuộc chat -> một mục, đủ tin trong khung hội thoại
+        if (f.text_content && f.path.includes('/_chat/')) {
+          const msgs = f.text_content.split('\n').slice(1).map((line, idx) => {
+            const [ts = '', who = '', , ...rest] = line.split(' | ')
+            return { id: `chat-${f.id}-${idx}`, author: who, timestamp: ts, text: rest.join(' | '), isOutgoing: who === 'Chủ máy' }
+          }).filter((m) => m.timestamp)
+          const thread = (f.text_content.split('\n')[1] || '').split(' | ')[2] || f.name
+          const last = msgs[msgs.length - 1]
+          if (last) {
+            list.push({
+              id: `chat-${f.id}`,
+              category: 'chat',
+              subCategory: /\/_chat\/imessage\//.test(f.path) ? 'SMS / MMS' : 'Zalo / OTT chat',
+              chatId: thread,
+              profileName: thread,
+              author: last.author,
+              recipient: thread,
+              displayName: thread,
+              timestamp: last.timestamp,
+              content: last.text,
+              raw: f,
+              threadId: thread,
+              metadata: { ...baseMeta, 'Conversation': thread, 'Messages': msgs.length, 'First message': msgs[0].timestamp, 'Last message': last.timestamp },
+              threadMessages: msgs,
+            })
+            continue
+          }
+        }
         if (f.text_content) {
           const lines = f.text_content.split('\n')
           const isZalo = f.name.toLowerCase().includes('zalo')
@@ -268,7 +351,7 @@ export default function CaseDetail() {
               list.push({
                 id: `call-${f.id}-${idx}`,
                 category: 'call',
-                subCategory: direction.includes('đi') ? 'Outgoing call' : 'Incoming call',
+                subCategory: direction.includes('đi') ? 'Outgoing call' : direction.includes('nhỡ') ? 'Missed call' : 'Incoming call',
                 chatId: phone,
                 profileName: phone,
                 author: direction.includes('đi') ? 'Device owner' : phone,
@@ -406,24 +489,110 @@ export default function CaseDetail() {
     }
 
     return list
-  }, [files])
+  }, [])
+  const artifacts = useMemo(() => buildArtifacts(files), [buildArtifacts, files])
 
-  // Lọc dữ liệu theo thiết bị, danh mục và từ khóa tìm kiếm
-  // Danh sách người vật xuất hiện trong vụ án (người gửi/nhận/tên hiển thị/chủ hồ sơ)
-  const persons = useMemo(() => {
-    const set = new Set<string>()
-    for (const a of artifacts) {
-      for (const v of [a.author, a.recipient, a.displayName, a.profileName]) {
-        const t = (v || '').trim()
-        if (t && t !== '-' && t.length < 80) set.add(t)
-      }
+  // Lọc theo loại tệp/đối tượng: mỗi tệp server trả về một dòng; tệp có bản ghi cấp tệp (ảnh, tài liệu...) thì dùng bản ghi đó
+  const fileRows = useMemo<ArtifactItem[]>(() => {
+    const fs = srv?.items ?? []
+    const own = new Map<number, ArtifactItem>()
+    for (const a of buildArtifacts(fs)) if (a.raw && /^(media|cam|trans|doc|chat)-/.test(a.id)) own.set(a.raw.id, a)
+    return fs.map((f) => own.get(f.id) ?? {
+      id: `file-${f.id}`,
+      category: f.kind === 'image' || f.kind === 'video' || f.kind === 'audio' ? 'media' : 'document',
+      subCategory: 'Documents & Notes',
+      chatId: f.name,
+      profileName: f.device || 'Unassigned device',
+      author: f.device || 'Unassigned device',
+      recipient: 'Device storage',
+      displayName: f.name,
+      timestamp: f.mtime.replace('T', ' '),
+      content: f.text_content ? f.text_content.slice(0, 160) : f.name,
+      raw: f,
+      metadata: fileMeta(f),
+    })
+  }, [buildArtifacts, srv])
+
+  // Dung lượng theo loại tệp, đi theo bộ lọc thiết bị (như màn Lưu trữ Samsung)
+  // Số liệu thật từ server (trang chỉ giữ 20.000 tệp mới nhất); lỗi thì tính từ tệp đã tải
+  const [storeView, setStoreView] = useState<'cloud' | 'list'>('list')
+  const [srvStore, setSrvStore] = useState<{ by: Record<StoreKey, { n: number; size: number }>; n: number; size: number } | null>(null)
+  useEffect(() => {
+    api.fileStats(name, activeDevice || undefined, storeView === 'cloud').then((s) => setSrvStore(s as typeof srvStore)).catch(() => setSrvStore(null))
+  }, [name, activeDevice, files, storeView])
+  const storeStats = useMemo(() => {
+    if (srvStore) return srvStore
+    const by = Object.fromEntries(STORE.map((s) => [s.key, { n: 0, size: 0 }])) as Record<StoreKey, { n: number; size: number }>
+    let n = 0
+    let size = 0
+    for (const f of files) {
+      if (activeDevice && f.device !== activeDevice) continue
+      if (storeView === 'cloud' && !CLOUD_RE.test(f.path)) continue
+      const x = by[storeOf(f)]
+      x.n++
+      x.size += f.size
+      n++
+      size += f.size
     }
-    return Array.from(set).sort((x, y) => x.localeCompare(y))
-  }, [artifacts])
+    return { by, n, size }
+  }, [files, activeDevice, srvStore, storeView])
+
+  // Lọc theo loại tệp hoặc đối tượng: server đếm và lọc trên toàn bộ tệp của thiết bị (trang chỉ nạp 20.000 tệp mới nhất).
+  // Đối tượng chỉ có ở ảnh/video nên bỏ qua khi đang xem Chat/Cuộc gọi/Danh bạ.
+  const storeKey = selectedCategory.startsWith('store:') ? selectedCategory.slice(6) : ''
+  const objOn = obj !== 'all' && (storeKey || selectedCategory === 'all') ? obj : ''
+  // Nguồn (app / thư mục lấy được) chọn ở cây Lưu trữ; chỉ áp khi xem theo nguồn/loại tệp, đổi thiết bị thì bỏ
+  const [src, setSrc] = useState('')
+  useEffect(() => setSrc(''), [activeDevice])
+  const srcOn = storeKey || selectedCategory === 'all' ? src : ''
+  useEffect(() => { if (storeKey === 'chat' || selectedCategory === 'chat') setViewMode('conversation') }, [storeKey, selectedCategory])
+  const srvMode = !!(storeKey || objOn || srcOn)
+  const fq = { collection: name, device: activeDevice, store: storeKey, cloud: storeView === 'cloud', q: activeSearch.trim(), date_from: dateFrom, date_to: dateTo, src: srcOn }
+  const fqKey = JSON.stringify(fq)
+  const [objCounts, setObjCounts] = useState<Record<string, number>>({})
+  useEffect(() => {
+    let alive = true
+    api.fileObjects(fq).then((c) => alive && setObjCounts(c)).catch(() => alive && setObjCounts({}))
+    return () => { alive = false }
+  }, [fqKey, files])
+  // Cây Lưu trữ: Nguồn (Zalo, Messenger, Camera…) -> loại tệp (Tin nhắn, Hình ảnh, Video…)
+  const [apps, setApps] = useState<Awaited<ReturnType<typeof api.fileApps>>>([])
+  useEffect(() => {
+    let alive = true
+    api.fileApps(name, activeDevice || undefined, storeView === 'cloud').then((a) => alive && setApps(a)).catch(() => alive && setApps([]))
+    return () => { alive = false }
+  }, [name, activeDevice, storeView, files])
+  const srvKey = srvMode ? JSON.stringify([fq, objOn]) : ''
+  const srvKeyRef = useRef(srvKey)
+  srvKeyRef.current = srvKey
+  const loadSrv = (page: number) => {
+    const k = srvKey
+    setSrvBusy(true)
+    api.browseFiles({ ...fq, obj: objOn, page })
+      // chỉ nối đúng trang kế tiếp: bỏ kết quả của bộ lọc cũ và trang tải trùng
+      .then((r) => { if (srvKeyRef.current === k) setSrv((s) => (page === 1 ? r : s && r.page === s.page + 1 ? { ...r, items: [...s.items, ...r.items] } : s)) })
+      .catch((e: Error) => { if (srvKeyRef.current === k) setErr(e.message) })
+      .finally(() => { if (srvKeyRef.current === k) setSrvBusy(false) })
+  }
+  useEffect(() => {
+    setSrv(null)
+    if (srvKey) loadSrv(1)
+  }, [srvKey, files])
+  // Cuộn tới cuối danh sách thì tự nạp trang tiếp; lỗi thì dừng, bấm nút để thử lại
+  const moreRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    const el = moreRef.current
+    if (!el || !srv) return
+    const io = new IntersectionObserver(([e]) => { if (e.isIntersecting) loadSrv(srv.page + 1) })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [srv])
 
   const filteredArtifacts = useMemo(() => {
+    if (srvMode) return fileRows // server đã lọc thiết bị, cloud, loại tệp, đối tượng, ngày và từ khóa
     return artifacts.filter((a) => {
       if (activeDevice && a.raw?.device !== activeDevice) return false
+      if (storeView === 'cloud' && !(a.raw && CLOUD_RE.test(a.raw.path))) return false
       if (selectedCategory !== 'all' && a.category !== selectedCategory) return false
       if (selectedSubCategory !== 'all' && a.subCategory !== selectedSubCategory) return false
       if (activeSearch.trim()) {
@@ -441,21 +610,10 @@ export default function CaseDetail() {
         if (dateFrom && d < dateFrom) return false
         if (dateTo && d > dateTo) return false
       }
-      if (person !== 'all') {
-        const pl = person.toLowerCase()
-        const hit = [a.author, a.recipient, a.displayName, a.profileName, a.chatId].some(
-          (v) => (v || '').toLowerCase().includes(pl)
-        )
-        if (!hit) return false
-      }
-      if (qrOnly === 'qr') {
-        const hay = [a.content, a.displayName, ...(a.metadata ? Object.values(a.metadata) : [])]
-          .map((v) => String(v ?? '').toLowerCase())
-        if (!hay.some((v) => v.includes('qr'))) return false
-      }
       return true
     })
-  }, [artifacts, activeDevice, selectedCategory, selectedSubCategory, activeSearch, dateFrom, dateTo, person, qrOnly])
+  }, [srvMode, artifacts, fileRows, activeDevice, storeView, selectedCategory, selectedSubCategory, activeSearch, dateFrom, dateTo])
+  const shownTotal = srvMode ? (srv?.total ?? 0) : filteredArtifacts.length
 
   // Thống kê số lượng từng danh mục
   const categoryCounts = useMemo(() => {
@@ -483,6 +641,9 @@ export default function CaseDetail() {
     if (!filteredArtifacts.length) return null
     return filteredArtifacts.find((a) => a.id === selectedArtifactId) || filteredArtifacts[0]
   }, [filteredArtifacts, selectedArtifactId])
+  // Tài liệu cấp tệp: Preview hiện toàn bộ chữ đã trích (indexer lưu tối đa 50.000 ký tự), không phải 160 ký tự của dòng danh sách.
+  // Bản ghi chat/cuộc gọi/danh bạ giữ nội dung của bản ghi đó.
+  const fullText = selectedArtifact && /^(doc|file|trans|cam)-/.test(selectedArtifact.id) ? selectedArtifact.raw?.text_content || '' : ''
 
   // Grid view kiểu app Ảnh iPhone: chỉ ảnh/video/âm thanh trong bộ lọc hiện tại; bấm ô mở xem lớn
   const gridItems = useMemo(() => filteredArtifacts.filter((a) => a.category === 'media'), [filteredArtifacts])
@@ -506,26 +667,45 @@ export default function CaseDetail() {
       string,
       { threadId: string; title: string; count: number; lastMsg: string; timestamp: string }
     >()
-    for (const a of artifacts) {
+    for (const a of filteredArtifacts) {
       if (a.category !== 'chat') continue
       const tid = a.threadId || a.chatId || 'Chung'
       if (!map.has(tid)) {
         map.set(tid, {
           threadId: tid,
           title: a.displayName || a.chatId,
-          count: 1,
+          count: a.raw?.path.includes('/_chat/') ? a.threadMessages?.length ?? 1 : 1,
           lastMsg: a.content,
           timestamp: a.timestamp,
         })
       } else {
         const t = map.get(tid)!
-        t.count += 1
+        t.count += a.raw?.path.includes('/_chat/') ? a.threadMessages?.length ?? 1 : 1
         t.lastMsg = a.content
         t.timestamp = a.timestamp
       }
     }
-    return Array.from(map.values())
-  }, [artifacts])
+    return Array.from(map.values()).sort((x, y) => (y.timestamp || '').localeCompare(x.timestamp || ''))
+  }, [filteredArtifacts])
+
+  // Khung chat kiểu Zalo: gộp mọi phần của hội thoại (tệp _p1, _p2...), bỏ trùng, theo thời gian; hiện 500 tin cuối, bấm xem tin cũ hơn
+  const chatTid = activeThreadId || selectedArtifact?.threadId || ''
+  const chatMsgs = useMemo(() => {
+    const seen = new Set<string>()
+    return filteredArtifacts
+      .filter((a) => a.category === 'chat' && (a.threadId || a.chatId) === chatTid)
+      .flatMap((a) => a.threadMessages ?? [])
+      .filter((m) => !seen.has(m.id) && !!seen.add(m.id))
+      .sort((x, y) => x.timestamp.localeCompare(y.timestamp))
+  }, [filteredArtifacts, chatTid])
+  const [msgKind, setMsgKind] = useState('')
+  const chatView = useMemo(() => (msgKind ? chatMsgs.filter((m) => msgKindOf(m.text) === msgKind) : chatMsgs), [chatMsgs, msgKind])
+  const [chatShow, setChatShow] = useState(500)
+  const chatEnd = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    setChatShow(500)
+    requestAnimationFrame(() => chatEnd.current?.scrollIntoView({ block: 'end' }))
+  }, [chatTid, viewMode])
 
   return (
     <div className="flex flex-col h-screen w-screen bg-[#f0f3f6] text-[#1c2d42] font-sans overflow-hidden select-none">
@@ -536,33 +716,24 @@ export default function CaseDetail() {
         {/* Hàng 1: Tiêu đề vụ án & Toolbar các nút tác vụ */}
         <div className="flex h-11 items-center justify-between px-3">
           <div className="flex items-center gap-3 min-w-0">
-            <select
-              value={name}
-              onChange={(e) => navigate(`/cases/${encodeURIComponent(e.target.value)}`)}
-              title="Chọn vụ án / dự án"
-              className="inline-flex items-center max-w-[220px] rounded bg-white/10 hover:bg-white/20 text-white px-2 py-1 text-xs font-medium transition-colors cursor-pointer outline-none [&>option]:text-navy"
-            >
-              {caseList.length === 0 && <option value={name}>{name}</option>}
-              {caseList.map((c) => (
-                <option key={c.name} value={c.name}>{c.name}</option>
-              ))}
-            </select>
             <button
               type="button"
-              onClick={() => setOpenCaseMgrModal(true)}
-              title="Quản lý vụ án (tạo / sửa / xoá)"
+              onClick={() => navigate('/')}
+              title="Quay lại danh sách thiết bị"
+              aria-label="Quay lại danh sách thiết bị"
               className="inline-flex items-center gap-1 rounded bg-white/10 hover:bg-[#2f6fed] text-white px-1.5 py-1 text-[11px] font-medium cursor-pointer transition-colors"
             >
-              <Plus size={13} />
+              <ChevronLeft size={14} aria-hidden="true" />
             </button>
             <div className="h-4 w-px bg-white/20" />
             <div className="flex items-center gap-2 truncate">
               <span className="text-xs font-bold uppercase tracking-wider text-[#4a7dff]">
-                MAGNET AXIOM EXAMINE
+                {t('FORENSIC INVESTIGATION')}
               </span>
               <span className="text-xs text-slate-400">&bull;</span>
-              <span className="text-sm font-bold text-white truncate" title={name}>
-                {name || 'vụ án c1'}
+              {/* vào từ thẻ thiết bị (?device=) thì hiện "vụ án - thiết bị" */}
+              <span className="text-sm font-bold text-white truncate" title={activeDevice ? `${name} - ${activeDevice}` : name}>
+                {name || 'vụ án c1'}{activeDevice && ` - ${activeDevice}`}
               </span>
             </div>
           </div>
@@ -627,23 +798,6 @@ export default function CaseDetail() {
           <div className="flex items-center gap-1.5 overflow-x-auto py-1 scrollbar-none">
             <span className="font-bold tracking-wider text-slate-300 mr-2 text-[11px]">{t('FILTERS')}</span>
 
-            {/* Filter: Thiết bị thu giữ */}
-            <div className="relative inline-flex items-center">
-              <select
-                value={activeDevice}
-                onChange={(e) => setSp(e.target.value ? { device: e.target.value } : {})}
-                className="h-6 rounded bg-[#0c223c] text-white border border-white/20 px-2 pr-6 text-[11px] appearance-none cursor-pointer focus:outline-none focus:border-[#4a7dff]"
-              >
-                <option value="">{t('Evidence: ')}{t('All devices')}</option>
-                {devs?.items.map((d) => (
-                  <option key={d.name} value={d.name}>
-                    {d.name} ({t(DEVICE_LABELS[d.type])})
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={11} className="pointer-events-none absolute right-1.5 text-slate-300" />
-            </div>
-
             {/* Filter: Danh mục Artifacts */}
             <div className="relative inline-flex items-center">
               <select
@@ -658,8 +812,7 @@ export default function CaseDetail() {
                 <option value="chat">{t('Messages & Chats (CHAT)')}</option>
                 <option value="call">{t('Call logs (CALLS)')}</option>
                 <option value="contact">{t('Contacts (CONTACTS)')}</option>
-                <option value="media">{t('Images & Video (MEDIA)')}</option>
-                <option value="document">{t('Documents & Logs')}</option>
+                {STORE.map((s) => <option key={s.key} value={`store:${s.key}`}>Tệp: {s.label}</option>)}
               </select>
               <ChevronDown size={11} className="pointer-events-none absolute right-1.5 text-slate-300" />
             </div>
@@ -680,39 +833,28 @@ export default function CaseDetail() {
               className="h-6 rounded bg-[#0c223c] text-white border border-white/20 px-1.5 text-[11px] cursor-pointer focus:outline-none focus:border-[#4a7dff]"
             />
 
-            {/* Bộ lọc người vật */}
+            {/* Bộ lọc đối tượng (kiểu app Ảnh iPhone) thay cho Người vật + QR + Thẻ: chỉ áp cho ảnh/video */}
             <div className="relative inline-flex items-center">
               <select
-                value={person}
-                onChange={(e) => setPerson(e.target.value)}
-                title="Lọc theo người vật (người gửi / người nhận / đối tượng)"
-                className="h-6 rounded bg-[#0c223c] text-white border border-white/20 px-2 pr-6 text-[11px] appearance-none cursor-pointer focus:outline-none focus:border-[#4a7dff] max-w-40"
+                value={objOn || 'all'}
+                onChange={(e) => {
+                  setObj(e.target.value)
+                  // đối tượng chỉ có ở ảnh/video: đang xem Chat/Cuộc gọi/Danh bạ thì chuyển về Tất cả
+                  if (e.target.value !== 'all' && !storeKey && selectedCategory !== 'all') {
+                    setSelectedCategory('all')
+                    setSelectedSubCategory('all')
+                  }
+                }}
+                title="Lọc ảnh/video theo đối tượng nhận diện (tag AI, chữ OCR, GPS)"
+                className="h-6 rounded bg-[#0c223c] text-white border border-white/20 px-2 pr-6 text-[11px] appearance-none cursor-pointer focus:outline-none focus:border-[#4a7dff]"
               >
-                <option value="all">Người vật: Tất cả</option>
-                {persons.map((pr) => (
-                  <option key={pr} value={pr}>{pr}</option>
+                <option value="all">Đối tượng: Tất cả ({objCounts.all || 0})</option>
+                {OBJ.map((o) => (
+                  <option key={o.key} value={o.key}>{o.label} ({objCounts[o.key] || 0})</option>
                 ))}
               </select>
               <ChevronDown size={11} className="pointer-events-none absolute right-1.5 text-slate-300" />
             </div>
-
-            {/* Bộ lọc QR */}
-            <div className="relative inline-flex items-center">
-              <select
-                value={qrOnly}
-                onChange={(e) => setQrOnly(e.target.value)}
-                title="Lọc bản ghi có mã QR"
-                className="h-6 rounded bg-[#0c223c] text-white border border-white/20 px-2 pr-6 text-[11px] appearance-none cursor-pointer focus:outline-none focus:border-[#4a7dff]"
-              >
-                <option value="all">QR: Tất cả</option>
-                <option value="qr">QR: Có mã QR</option>
-              </select>
-              <ChevronDown size={11} className="pointer-events-none absolute right-1.5 text-slate-300" />
-            </div>
-
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/5 text-slate-300 text-[11px] border border-white/10">
-              {t('Tags: All')}
-            </span>
           </div>
 
           {/* Ô tìm kiếm Search + GO */}
@@ -768,15 +910,15 @@ export default function CaseDetail() {
         {/* =====================================================================
             CỘT 1 (TRÁI): ARTIFACTS CATEGORIES TREE
             ===================================================================== */}
-        <aside className="w-52 lg:w-56 shrink-0 bg-white border-r border-[#d3dbe3] flex flex-col overflow-hidden">
+        <aside className="w-60 lg:w-64 shrink-0 bg-white border-r border-[#d3dbe3] flex flex-col overflow-hidden">
           {/* Header Cột trái */}
           <div className="h-9 px-3 bg-[#e8eef3] border-b border-[#d3dbe3] flex items-center justify-between text-xs font-semibold text-[#0f2a4a]">
             <span className="flex items-center gap-1.5">
               <Layers size={14} className="text-[#2f6fed]" />
-              <span>Artifacts Categories</span>
+              <span>{t('Artifacts Categories')}</span>
             </span>
             <span className="text-[11px] px-1.5 py-0.2 rounded bg-slate-200 text-slate-700 font-medium">
-              {filteredArtifacts.length}
+              {shownTotal}
             </span>
           </div>
 
@@ -788,6 +930,7 @@ export default function CaseDetail() {
               onClick={() => {
                 setSelectedCategory('all')
                 setSelectedSubCategory('all')
+                setSrc('')
               }}
               className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded text-left transition-colors cursor-pointer ${
                 selectedCategory === 'all' && selectedSubCategory === 'all'
@@ -809,6 +952,90 @@ export default function CaseDetail() {
                 {categoryCounts.c.all || 0}
               </span>
             </button>
+
+            {/* Lưu trữ kiểu Samsung: tổng dung lượng, thanh nhiều màu, danh sách loại tệp (bấm để lọc) */}
+            <div className="pt-2 pb-1">
+              <div className="px-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 truncate">
+                Lưu trữ{activeDevice ? ` · ${activeDevice}` : ''}
+              </div>
+              <div className="px-2.5 pt-1 text-sm font-semibold text-[#0f2a4a]">
+                {fmtSize(storeStats.size)} <span className="text-[11px] font-normal text-slate-500">· {storeStats.n} tệp</span>
+              </div>
+              <div
+                className="mx-2.5 mt-1.5 mb-1.5 flex h-2 gap-0.5 overflow-hidden rounded bg-slate-200"
+                role="img"
+                aria-label={STORE.filter((s) => storeStats.by[s.key].size).map((s) => `${s.label} ${fmtSize(storeStats.by[s.key].size)}`).join(', ') || 'Chưa có tệp'}
+              >
+                {STORE.filter((s) => storeStats.by[s.key].size > 0).map((s) => (
+                  <div
+                    key={s.key}
+                    className="min-w-[2px]"
+                    style={{ flexGrow: storeStats.by[s.key].size, backgroundColor: s.color }}
+                    title={`${s.label}: ${fmtSize(storeStats.by[s.key].size)} (${Math.round((100 * storeStats.by[s.key].size) / storeStats.size)}%)`}
+                  />
+                ))}
+              </div>
+              <div role="radiogroup" aria-label="Kiểu hiển thị" className="flex gap-3 px-2.5 pb-1 text-[11px] text-slate-600">
+                {([['cloud', 'Cloud'], ['list', 'Bình thường']] as const).map(([v, label]) => (
+                  <label key={v} className="flex items-center gap-1 cursor-pointer">
+                    <input type="radio" name="storeView" checked={storeView === v} onChange={() => setStoreView(v)} className="accent-[#0078d4]" />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              {apps.map((ap) => {
+                const appOn = src === ap.src
+                return (
+                  <Fragment key={ap.src}>
+                    <button
+                      type="button"
+                      aria-pressed={appOn}
+                      onClick={() => {
+                        setSrc(ap.by.chat || !(appOn && selectedCategory === 'all') ? ap.src : '')
+                        setSelectedCategory(ap.by.chat ? 'store:chat' : 'all')
+                        setSelectedSubCategory('all')
+                      }}
+                      className={`w-full flex items-center gap-1.5 px-2 py-1 rounded text-left text-[11.5px] transition-colors cursor-pointer ${
+                        appOn && (ap.by.chat || selectedCategory === 'all') ? 'bg-[#0078d4] text-white font-medium' : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      {ap.by.chat ? <MessageSquare size={12} className="shrink-0" aria-hidden="true" /> : <ChevronRight size={12} className={`shrink-0 transition-transform ${appOn ? 'rotate-90' : ''}`} aria-hidden="true" />}
+                      <span className="flex-1 truncate font-medium" title={ap.src}>{ap.src}</span>
+                      <span className="text-[10px] tabular-nums opacity-80">{ap.n}</span>
+                      <span className="w-14 text-right text-[10px] tabular-nums opacity-80">{fmtSize(ap.size)}</span>
+                    </button>
+                    {appOn && !ap.by.chat && (
+                      <div className="ml-4 mb-1 border-l border-slate-200 pl-1.5">
+                        {STORE.filter((s) => ap.by[s.key]).map((s) => {
+                          const [n, size] = ap.by[s.key]
+                          const on = selectedCategory === `store:${s.key}`
+                          return (
+                            <button
+                              key={s.key}
+                              type="button"
+                              onClick={() => {
+                                setSelectedCategory(`store:${s.key}`)
+                                setSelectedSubCategory('all')
+                              }}
+                              className={`w-full flex items-center gap-2 px-2 py-0.5 rounded text-left text-[11px] transition-colors cursor-pointer ${
+                                on ? 'bg-[#0078d4] text-white font-medium' : 'text-slate-600 hover:bg-slate-100'
+                              }`}
+                            >
+                              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: s.color }} aria-hidden="true" />
+                              <span className="flex-1 truncate">{s.label}</span>
+                              <span className={`text-[10px] tabular-nums ${on ? 'text-white' : 'text-slate-500'}`}>{n}</span>
+                              <span className={`w-14 text-right text-[10px] tabular-nums ${on ? 'text-white' : 'text-slate-500'}`}>{fmtSize(size)}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </Fragment>
+                )
+              })}
+            </div>
+
+            <div className="px-2.5 pt-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Bản ghi trích xuất</div>
 
             {/* Mục: CHAT & MESSAGES */}
             <div className="pt-0.5">
@@ -963,136 +1190,12 @@ export default function CaseDetail() {
                 </span>
               </button>
             </div>
-
-            {/* Mục: MEDIA & PICTURES */}
-            <div>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedCategory('media')
-                  setSelectedSubCategory('all')
-                }}
-                className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded text-left transition-colors font-medium cursor-pointer ${
-                  selectedCategory === 'media' && selectedSubCategory === 'all'
-                    ? 'bg-[#0078d4] text-white shadow-xs'
-                    : 'text-[#0f2a4a] hover:bg-slate-100'
-                }`}
-              >
-                <span className="flex items-center gap-2">
-                  <ImageIcon
-                    size={14}
-                    className={
-                      selectedCategory === 'media' && selectedSubCategory === 'all'
-                        ? 'text-white'
-                        : 'text-amber-600'
-                    }
-                  />
-                  <span className="font-bold">MEDIA & PICTURES</span>
-                </span>
-                <span
-                  className={`text-[11px] px-1.5 rounded-full font-bold ${
-                    selectedCategory === 'media' && selectedSubCategory === 'all'
-                      ? 'bg-white/20 text-white'
-                      : 'bg-amber-50 text-amber-700'
-                  }`}
-                >
-                  {categoryCounts.c.media || 0}
-                </span>
-              </button>
-
-              <div className="pl-5 pr-1 py-0.5 space-y-0.5">
-                {['Camera log', 'Photos / Video'].map((sub) => {
-                  const cnt = categoryCounts.sub[sub] || 0
-                  const isSubActive = selectedCategory === 'media' && selectedSubCategory === sub
-                  return (
-                    <button
-                      key={sub}
-                      type="button"
-                      onClick={() => {
-                        setSelectedCategory('media')
-                        setSelectedSubCategory(sub)
-                      }}
-                      className={`w-full flex items-center justify-between px-2 py-1 rounded text-left text-[11.5px] transition-colors cursor-pointer ${
-                        isSubActive ? 'bg-[#0078d4] text-white font-medium' : 'text-slate-600 hover:bg-slate-100'
-                      }`}
-                    >
-                      <span>{t(sub)}</span>
-                      <span className={`text-[10px] ${isSubActive ? 'text-white' : 'text-slate-400'}`}>
-                        {cnt}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            {/* Mục: DOCUMENTS & TEXT */}
-            <div>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedCategory('document')
-                  setSelectedSubCategory('all')
-                }}
-                className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded text-left transition-colors font-medium cursor-pointer ${
-                  selectedCategory === 'document' && selectedSubCategory === 'all'
-                    ? 'bg-[#0078d4] text-white shadow-xs'
-                    : 'text-[#0f2a4a] hover:bg-slate-100'
-                }`}
-              >
-                <span className="flex items-center gap-2">
-                  <FileText
-                    size={14}
-                    className={
-                      selectedCategory === 'document' && selectedSubCategory === 'all'
-                        ? 'text-white'
-                        : 'text-cyan-600'
-                    }
-                  />
-                  <span className="font-bold">DOCUMENTS & TEXT</span>
-                </span>
-                <span
-                  className={`text-[11px] px-1.5 rounded-full font-bold ${
-                    selectedCategory === 'document' && selectedSubCategory === 'all'
-                      ? 'bg-white/20 text-white'
-                      : 'bg-cyan-50 text-cyan-700'
-                  }`}
-                >
-                  {categoryCounts.c.document || 0}
-                </span>
-              </button>
-
-              <div className="pl-5 pr-1 py-0.5 space-y-0.5">
-                {['Transaction log', 'Documents & Notes'].map((sub) => {
-                  const cnt = categoryCounts.sub[sub] || 0
-                  const isSubActive = selectedCategory === 'document' && selectedSubCategory === sub
-                  return (
-                    <button
-                      key={sub}
-                      type="button"
-                      onClick={() => {
-                        setSelectedCategory('document')
-                        setSelectedSubCategory(sub)
-                      }}
-                      className={`w-full flex items-center justify-between px-2 py-1 rounded text-left text-[11.5px] transition-colors cursor-pointer ${
-                        isSubActive ? 'bg-[#0078d4] text-white font-medium' : 'text-slate-600 hover:bg-slate-100'
-                      }`}
-                    >
-                      <span>{t(sub)}</span>
-                      <span className={`text-[10px] ${isSubActive ? 'text-white' : 'text-slate-400'}`}>
-                        {cnt}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
           </div>
 
           {/* Footer Cột trái */}
           <div className="h-8 px-3 bg-[#f7f9fa] border-t border-[#d3dbe3] flex items-center justify-between text-[11px] text-slate-500">
             <span>{t('Devices')}: {activeDevice || t('All devices')}</span>
-            <span className="text-[#2f6fed] font-semibold">{files.length} tệp</span>
+            <span className="text-[#2f6fed] font-semibold" title={files.length < fileTotal ? 'Đang hiện các tệp mới nhất' : undefined}>{files.length < fileTotal ? `${files.length}/${fileTotal}` : files.length} tệp</span>
           </div>
         </aside>
 
@@ -1103,8 +1206,8 @@ export default function CaseDetail() {
           {/* Header Cột giữa */}
           <div className="h-9 px-3 bg-[#e8eef3] border-b border-[#d3dbe3] flex items-center justify-between text-xs">
             <div className="flex items-center gap-2">
-              <span className="font-bold text-[#0f2a4a]">Evidence</span>
-              <span className="text-slate-500">({filteredArtifacts.length})</span>
+              <span className="font-bold text-[#0f2a4a]">{t('Evidence')}</span>
+              <span className="text-slate-500">({shownTotal})</span>
               {activeSearch && (
                 <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[11px] font-medium">
                   Lọc: "{activeSearch}"
@@ -1116,18 +1219,46 @@ export default function CaseDetail() {
             <button
               type="button"
               onClick={() => setViewMode(nextView)}
-              title={`Bấm để chuyển sang ${VIEW_LABEL[nextView]}`}
+              title={`Bấm để chuyển sang ${t(VIEW_LABEL[nextView])}`}
               className="h-6 px-2.5 rounded text-[11px] font-medium transition-colors cursor-pointer flex items-center gap-1 bg-[#0078d4] hover:bg-[#006abc] text-white shadow-xs"
             >
               {viewMode === 'grid' ? <LayoutGrid size={12} /> : viewMode === 'conversation' ? <MessageSquare size={12} /> : <Rows3 size={12} />}
-              <span>{VIEW_LABEL[viewMode]}</span>
+              <span>{t(VIEW_LABEL[viewMode])}</span>
               <Repeat size={11} className="opacity-70" />
             </button>
           </div>
+          {src && (() => {
+            const ap = apps.find((x) => x.src === src)
+            if (!ap?.by.chat) return null
+            return (
+              <div role="radiogroup" aria-label={`Lọc trong ${src}`} className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[#d3dbe3] bg-white px-3 py-1.5 text-[11px]">
+                <span className="mr-1 font-semibold text-[#0f2a4a]">{src}</span>
+                {STORE.filter((s) => ap.by[s.key]).map((s) => {
+                  const on = storeKey === s.key
+                  return (
+                    <button
+                      key={s.key}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => {
+                        setSelectedCategory(`store:${s.key}`)
+                        setSelectedSubCategory('all')
+                        if (s.key !== 'chat' && viewMode === 'conversation') setViewMode(s.key === 'image' || s.key === 'video' ? 'grid' : 'column')
+                      }}
+                      className={`cursor-pointer rounded-full border px-2.5 py-0.5 transition-colors ${on ? 'border-[#0068ff] bg-[#0068ff] text-white' : 'border-slate-200 text-slate-600 hover:bg-slate-100'}`}
+                    >
+                      {s.key === 'chat' ? 'Hội thoại' : s.label} <span className="tabular-nums opacity-75">{ap.by[s.key][0]}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )
+          })()}
 
           {/* Vùng hiển thị bảng dữ liệu chứng cứ */}
           <div className="flex-1 overflow-auto">
-            {loading ? (
+            {loading || (srvMode && !srv && srvBusy) ? (
               <div className="p-12 text-center text-xs text-slate-400">{t('Loading case data...')}</div>
             ) : filteredArtifacts.length === 0 ? (
               <div className="p-12 text-center text-slate-400 text-xs">
@@ -1175,7 +1306,7 @@ export default function CaseDetail() {
                         type="button"
                         onClick={() => {
                           setActiveThreadId(th.threadId)
-                          const firstOfThread = artifacts.find(
+                          const firstOfThread = filteredArtifacts.find(
                             (a) => a.threadId === th.threadId || a.chatId === th.threadId
                           )
                           if (firstOfThread) setSelectedArtifactId(firstOfThread.id)
@@ -1207,41 +1338,90 @@ export default function CaseDetail() {
                   })}
                 </div>
 
-                {/* Luồng tin nhắn trong hội thoại */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#fafbfc]">
-                  <div className="border-b border-slate-200 pb-2 mb-3">
-                    <h3 className="font-bold text-slate-800 text-xs">
-                      Conversation: {activeThreadId || selectedArtifact?.threadId || 'General'}
-                    </h3>
-                  </div>
-
-                  {(selectedArtifact?.threadMessages || [
-                    {
-                      id: selectedArtifact?.id || '0',
-                      author: selectedArtifact?.author || '',
-                      timestamp: selectedArtifact?.timestamp || '',
-                      text: selectedArtifact?.content || '',
-                      isOutgoing: false,
-                    },
-                  ]).map((msg) => (
-                    <div
-                      key={msg.id}
-                      className={`flex flex-col ${msg.isOutgoing ? 'items-end' : 'items-start'}`}
-                    >
-                      <span className="text-[10px] text-slate-400 mb-0.5 px-1">
-                        {msg.author} &bull; {msg.timestamp}
-                      </span>
-                      <div
-                        className={`max-w-[80%] rounded-xl px-3 py-2 text-xs leading-relaxed shadow-2xs ${
-                          msg.isOutgoing
-                            ? 'bg-[#0078d4] text-white rounded-tr-none'
-                            : 'bg-white text-slate-800 rounded-tl-none border border-slate-200'
-                        }`}
-                      >
-                        {msg.text}
-                      </div>
+                {/* Luồng tin nhắn trong hội thoại: bong bóng kiểu Zalo, phân ngày, avatar chữ cái, tên người gửi đầu mỗi cụm */}
+                <div className="flex min-w-0 flex-1 flex-col bg-[#e2e9f1]">
+                  <div className="flex h-11 shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0068ff] text-[11px] font-bold text-white">
+                      {initials(chatTid || '?')}
                     </div>
-                  ))}
+                    <div className="min-w-0">
+                      <h3 className="truncate text-[13px] font-semibold text-slate-800">{chatTid || 'Chọn một hội thoại'}</h3>
+                      <p className="text-[10.5px] text-slate-500">{chatMsgs.length.toLocaleString('vi')} tin nhắn</p>
+                    </div>
+                  </div>
+                  <div className="flex-1 overflow-y-auto px-4 py-3">
+                    <div role="radiogroup" aria-label="Loại tin" className="sticky top-0 z-10 -mx-4 -mt-3 mb-2 flex flex-wrap gap-1 bg-[#e2e9f1]/95 px-4 py-1.5 text-[10.5px]">
+                      {MSG_KINDS.map(([k, label]) => {
+                        const n = k ? chatMsgs.filter((m) => msgKindOf(m.text) === k).length : chatMsgs.length
+                        if (k && !n) return null
+                        return (
+                          <button key={k || '*'} type="button" role="radio" aria-checked={msgKind === k} onClick={() => setMsgKind(k)}
+                            className={`cursor-pointer rounded-full px-2 py-0.5 ${msgKind === k ? 'bg-[#0068ff] text-white' : 'bg-white/80 text-slate-600 hover:bg-white'}`}>
+                            {label} <span className="tabular-nums opacity-75">{n}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {chatView.length > chatShow && (
+                      <div className="mb-2 text-center">
+                        <button type="button" onClick={() => setChatShow((n) => n + 500)} className="cursor-pointer rounded-full bg-white/80 px-3 py-1 text-[11px] text-[#0068ff] shadow-xs hover:bg-white">
+                          Xem tin cũ hơn ({(chatView.length - chatShow).toLocaleString('vi')})
+                        </button>
+                      </div>
+                    )}
+                    {chatView.slice(-chatShow).map((m, i, arr) => {
+                      const prev = arr[i - 1]
+                      const day = m.timestamp.slice(0, 10)
+                      const newDay = !prev || prev.timestamp.slice(0, 10) !== day
+                      const head = newDay || prev.author !== m.author
+                      const ref = m.text.match(/⟦(.+?)⟧/)?.[1]
+                      const text = m.text.replace(/\s*⟦.+?⟧/, '')
+                      const media = /^\[[^\]]+\]/.test(text)
+                      const url = ref ? `/api/fileref?p=${encodeURIComponent(ref)}` : ''
+                      const ext = ref?.split('.').pop()?.toLowerCase() ?? ''
+                      return (
+                        <div key={m.id}>
+                          {newDay && (
+                            <div className="my-3 text-center">
+                              <span className="rounded-full bg-black/20 px-2.5 py-0.5 text-[10.5px] text-white">{day.split('-').reverse().join('/')}</span>
+                            </div>
+                          )}
+                          <div className={`flex items-end gap-1.5 ${m.isOutgoing ? 'justify-end' : 'justify-start'} ${head ? 'mt-2' : 'mt-0.5'}`}>
+                            {!m.isOutgoing && (
+                              <div
+                                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white ${head ? '' : 'invisible'}`}
+                                style={{ backgroundColor: avatarColor(m.author) }}
+                                title={m.author}
+                              >
+                                {initials(m.author)}
+                              </div>
+                            )}
+                            <div
+                              className={`max-w-[70%] rounded-lg px-3 py-1.5 text-[12.5px] leading-snug shadow-xs ${
+                                m.isOutgoing ? 'bg-[#e5efff] text-slate-900' : 'bg-white text-slate-900'
+                              }`}
+                            >
+                              {!m.isOutgoing && head && <div className="mb-0.5 text-[10.5px] font-semibold" style={{ color: avatarColor(m.author) }}>{m.author}</div>}
+                              {ref && /^(jpe?g|png|gif|webp|heic|jxl)$/.test(ext) ? (
+                                <a href={url} target="_blank" rel="noreferrer"><img src={`${url}&thumb=1`} alt="Ảnh trong tin nhắn" loading="lazy" className="max-h-60 max-w-full rounded" /></a>
+                              ) : ref && /^(mp4|mov|m4v)$/.test(ext) ? (
+                                <video src={url} controls preload="none" className="max-h-60 max-w-full rounded" />
+                              ) : ref && /^(aac|m4a|amr|mp3|opus|ogg)$/.test(ext) ? (
+                                <audio src={url} controls preload="none" className="h-8 max-w-full" />
+                              ) : ref ? (
+                                <a href={url} target="_blank" rel="noreferrer" className="text-[#0068ff] underline">{text} · mở tệp</a>
+                              ) : null}
+                              {(!ref || !/^\[(Ảnh|Video|Tin nhắn thoại)\]$/.test(text)) && (
+                                <div className={`whitespace-pre-wrap break-words ${media ? 'italic text-slate-600' : ''}`}>{ref && media && /^\[(Ảnh|Video|Tin nhắn thoại)\]/.test(text) ? text.replace(/^\[[^\]]+\]\s*/, '') : text}</div>
+                              )}
+                              <div className="mt-0.5 text-right text-[9.5px] text-slate-400">{m.timestamp.slice(11, 16)}</div>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                    <div ref={chatEnd} />
+                  </div>
                 </div>
               </div>
             ) : (
@@ -1253,7 +1433,7 @@ export default function CaseDetail() {
                     <th className="py-1.5 px-2.5 border-r border-slate-200 min-w-32">{t('Chat ID / Source')}</th>
                     <th className="py-1.5 px-2.5 border-r border-slate-200 min-w-28">{t('Author / Sender')}</th>
                     <th className="py-1.5 px-2.5 border-r border-slate-200 min-w-28">{t('Recipient / Receiver')}</th>
-                    <th className="py-1.5 px-2.5 border-r border-slate-200 min-w-36">Message Sent Date/Time</th>
+                    <th className="py-1.5 px-2.5 border-r border-slate-200 min-w-36">{t('Message Sent Date/Time')}</th>
                     <th className="py-1.5 px-3 min-w-60">{t('Message / Extracted text')}</th>
                   </tr>
                 </thead>
@@ -1324,12 +1504,23 @@ export default function CaseDetail() {
                 </tbody>
               </table>
             )}
+            {srvMode && srv && srv.items.length < srv.total && (
+              <button
+                ref={moreRef}
+                type="button"
+                disabled={srvBusy}
+                onClick={() => loadSrv(srv.page + 1)}
+                className="mx-auto my-2 block rounded border border-[#d3dbe3] bg-white px-3 py-1 text-[11px] text-[#0f2a4a] cursor-pointer hover:bg-[#e8eef3] disabled:cursor-wait disabled:opacity-60"
+              >
+                {srvBusy ? 'Đang tải…' : `Tải thêm (${srv.items.length} / ${srv.total})`}
+              </button>
+            )}
           </div>
 
           {/* Footer Cột giữa */}
           <div className="h-8 px-3 bg-[#f7f9fa] border-t border-[#d3dbe3] flex items-center justify-between text-[11px] text-slate-500">
-            <span>{t('Showing')} {filteredArtifacts.length} {t('records')}</span>
-            <span className="text-slate-400 font-mono">Time zone: GMT+7 (Hà Nội, Băng Cốc)</span>
+            <span>{t('Showing')} {filteredArtifacts.length}{srvMode ? ` / ${shownTotal}` : ''} {t('records')}</span>
+            <span className="text-slate-400 font-mono">{t('Time zone: GMT+7 (Hanoi, Bangkok)')}</span>
           </div>
         </section>
 
@@ -1377,9 +1568,9 @@ export default function CaseDetail() {
                 {/* 1. KHUNG PREVIEW */}
                 <div className="border-b border-[#d3dbe3] bg-white p-3 flex flex-col shrink-0">
                   <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-150 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                    <span>PREVIEW</span>
+                    <span>{t('PREVIEW')}</span>
                     <span className="text-[10px] text-[#2f6fed] font-semibold">
-                      {selectedArtifact.subCategory}
+                      {t(selectedArtifact.subCategory)}
                     </span>
                   </div>
 
@@ -1435,9 +1626,12 @@ export default function CaseDetail() {
                     </div>
                   ) : (
                     <div className="py-1">
-                      <p className="text-xs text-slate-700 bg-slate-50 p-2.5 rounded border border-slate-200 font-mono leading-relaxed max-h-48 overflow-y-auto whitespace-pre-wrap">
-                        {selectedArtifact.content || 'No text preview available.'}
+                      <p className="text-xs text-slate-700 bg-slate-50 p-2.5 rounded border border-slate-200 font-mono leading-relaxed max-h-96 overflow-y-auto whitespace-pre-wrap break-all">
+                        {fullText || selectedArtifact.content || 'No text preview available.'}
                       </p>
+                      {fullText.length >= 50000 && (
+                        <p className="mt-1 text-[11px] text-slate-500">Chỉ hiện 50.000 ký tự đầu của tệp. Mở tệp gốc để xem toàn bộ.</p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1445,7 +1639,7 @@ export default function CaseDetail() {
                 {/* 2. BẢNG THUỘC TÍNH CHI TIẾT */}
                 <div className="p-3 bg-[#fbfcfd] flex-1">
                   <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                    <span>DETAILS & ARTIFACT INFORMATION</span>
+                    <span>{t('DETAILS & ARTIFACT INFORMATION')}</span>
                   </div>
 
                   <dl className="divide-y divide-slate-200/70 text-xs">

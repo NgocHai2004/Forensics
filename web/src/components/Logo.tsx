@@ -12,7 +12,7 @@ export default function Logo({ big = false, mark = false, size }: { big?: boolea
         </g>
       </svg>
       {!mark && <span>
-        <span className="text-navy">MOBILE</span> <span className="text-primary">FORENSIC</span>
+        <span className="text-navy">FORENSIC</span> <span className="text-primary">INVESTIGATION</span>
       </span>}
     </span>
   )
