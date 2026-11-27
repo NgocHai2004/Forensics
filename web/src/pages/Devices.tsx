@@ -6,6 +6,7 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   HardDrive,
   Smartphone,
   Layers,
@@ -17,13 +18,21 @@ import {
   Play,
   RotateCcw,
   KeyRound,
-  RefreshCw
+  RefreshCw,
+  ShieldCheck,
+  Shield,
+  ShieldAlert,
+  ShieldOff,
+  History,
+  Pencil,
+  Trash2,
+  CheckCircle2
 } from 'lucide-react'
 import { logout } from '../auth'
 import { DeviceThumb } from '../components/DeviceThumb'
 import { useI18n } from '../i18n'
 import { api, ApiError, fmtSize } from '../api'
-import type { Case, Device, DeviceAcqState, DeviceInfo, SystemStats, SyncItem } from '../api'
+import type { AuditEntry, Case, Device, FileItem, DeviceAcqState, DeviceInfo, SystemStats, SyncItem } from '../api'
 
 type Usb = Awaited<ReturnType<typeof api.usb>>['items'][number]
 type Stage = DeviceAcqState['stage']
@@ -105,7 +114,7 @@ function IconBtn({ label, tip, disabled, onClick, children }: {
 
 export default function Devices() {
   const navigate = useNavigate()
-  const { lang, t, theme, setTheme } = useI18n()
+  const { lang, t, theme } = useI18n()
   const isVi = lang === 'vi'
   const L = (vi: string, en: string) => (isVi ? vi : en)
   const [cases, setCases] = useState<Case[] | null>(null)
@@ -168,15 +177,91 @@ export default function Devices() {
 
   // Đồng bộ về hệ thống trung tâm: chọn thiết bị trong vụ án -> đưa vào hàng chờ gửi image + metadata
   const syncDlg = useRef<HTMLDialogElement>(null)
+  const auditDlg = useRef<HTMLDialogElement>(null)
+  const [auditItems, setAuditItems] = useState<AuditEntry[]>([])
+  const [auditBusy, setAuditBusy] = useState(false)
+  const [auditOnlyCase, setAuditOnlyCase] = useState(true)
+  const loadAudit = () => {
+    setAuditBusy(true)
+    api.audit(100).then(setAuditItems).catch(() => setAuditItems([])).finally(() => setAuditBusy(false))
+  }
+  const openAudit = () => { loadAudit(); auditDlg.current?.showModal() }
+  const renameDlg = useRef<HTMLDialogElement>(null)
+  const [renamingDev, setRenamingDev] = useState<string | null>(null)
+  const [renameVal, setRenameVal] = useState('')
+  const [renameErr, setRenameErr] = useState('')
+  const [renameBusy, setRenameBusy] = useState(false)
+  const [renameConfirm, setRenameConfirm] = useState(false)
+  const delDlg = useRef<HTMLDialogElement>(null)
+  const [deletingDev, setDeletingDev] = useState<string | null>(null)
+  const [delErr, setDelErr] = useState('')
+  const [delBusy, setDelBusy] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+  const showToast = (msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(cur => (cur === msg ? null : cur)), 3500)
+  }
+
+  const openRename = (devName: string, e: MouseEvent) => {
+    e.stopPropagation()
+    setRenamingDev(devName)
+    setRenameVal(devName)
+    setRenameErr('')
+    setRenameConfirm(false)
+    renameDlg.current?.showModal()
+  }
+  const submitRename = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!caseName || !renamingDev) return
+    const next = renameVal.trim()
+    if (!next) { setRenameErr(L('Nhập tên thiết bị', 'Enter device name')); return }
+    if (next === renamingDev) { setRenameErr(L('Tên mới trùng với tên hiện tại', 'New name is identical to current name')); return }
+    if (!renameConfirm) { setRenameConfirm(true); return }
+    setRenameBusy(true); setRenameErr('')
+    try {
+      await api.renameDevice(caseName, renamingDev, next)
+      renameDlg.current?.close()
+      api.devices(caseName).then(r => setDevs(r.items)).catch(() => {})
+      showToast(L(`Đã đổi tên thiết bị "${renamingDev}" thành "${next}"`, `Renamed device "${renamingDev}" to "${next}"`))
+    } catch (x) {
+      setRenameErr(x instanceof ApiError ? x.message : L('Không đổi tên được thiết bị', 'Cannot rename device'))
+    } finally { setRenameBusy(false) }
+  }
+  const openDelete = (devName: string, e: MouseEvent) => {
+    e.stopPropagation()
+    setDeletingDev(devName)
+    setDelErr('')
+    delDlg.current?.showModal()
+  }
+  const confirmDelete = async () => {
+    if (!caseName || !deletingDev) return
+    setDelBusy(true); setDelErr('')
+    try {
+      await api.deleteDevice(caseName, deletingDev)
+      delDlg.current?.close()
+      api.devices(caseName).then(r => setDevs(r.items)).catch(() => {})
+      showToast(L(`Đã xoá thiết bị "${deletingDev}" khỏi vụ án`, `Deleted device "${deletingDev}" from case`))
+    } catch (x) {
+      setDelErr(x instanceof ApiError ? x.message : L('Không xoá được thiết bị', 'Cannot delete device'))
+    } finally { setDelBusy(false) }
+  }
   const [syncSel, setSyncSel] = useState<Set<string>>(new Set())
   const [syncs, setSyncs] = useState<Record<string, SyncItem>>({})
   const [syncBusy, setSyncBusy] = useState(false)
   const [syncMsg, setSyncMsg] = useState('')
   const byDevice = (items: SyncItem[]) => Object.fromEntries(items.filter(s => s.status !== 'skipped').map(s => [s.device, s]))
 
+  const [syncExpand, setSyncExpand] = useState<string | null>(null)
+  const [syncFiles, setSyncFiles] = useState<Record<string, FileItem[]>>({})
+  const [syncFilesBusy, setSyncFilesBusy] = useState<string | null>(null)
+  const [syncFileSel, setSyncFileSel] = useState<Record<string, Set<number>>>({})
+
   const openSync = () => {
     setSyncSel(new Set())
     setSyncMsg('')
+    setSyncExpand(null)
+    setSyncFiles({})
+    setSyncFileSel({})
     api.syncs(caseName).then(r => setSyncs(byDevice(r.items))).catch(() => setSyncs({}))
     syncDlg.current?.showModal()
   }
@@ -187,11 +272,47 @@ export default function Devices() {
     return n
   })
 
+  const toggleExpandSync = async (name: string) => {
+    if (syncExpand === name) { setSyncExpand(null); return }
+    setSyncExpand(name)
+    if (!syncFiles[name]) {
+      setSyncFilesBusy(name)
+      try {
+        const res = await api.files({ collection: caseName, device: name, limit: 100 })
+        setSyncFiles(m => ({ ...m, [name]: res.items }))
+        setSyncFileSel(m => ({ ...m, [name]: new Set(res.items.map(f => f.id)) }))
+      } catch {
+        setSyncFiles(m => ({ ...m, [name]: [] }))
+      } finally {
+        setSyncFilesBusy(null)
+      }
+    }
+  }
+
+  const toggleSyncFile = (devName: string, fileId: number) => {
+    setSyncFileSel(m => {
+      const cur = new Set(m[devName] ?? [])
+      if (!cur.delete(fileId)) cur.add(fileId)
+      if (cur.size > 0) setSyncSel(s => new Set(s).add(devName))
+      return { ...m, [devName]: cur }
+    })
+  }
+
+  const toggleAllSyncFiles = (devName: string, checked: boolean) => {
+    const list = syncFiles[devName] ?? []
+    setSyncFileSel(m => ({ ...m, [devName]: new Set(checked ? list.map(f => f.id) : []) }))
+    if (checked && list.length) setSyncSel(s => new Set(s).add(devName))
+  }
+
   const doSync = async () => {
     setSyncBusy(true)
     setSyncMsg('')
     try {
-      const r = await api.syncQueue(caseName, [...syncSel])
+      const filesMap: Record<string, number[]> = {}
+      for (const dev of syncSel) {
+        if (syncFileSel[dev]) filesMap[dev] = [...syncFileSel[dev]]
+      }
+      const r = await api.syncQueue(caseName, [...syncSel], Object.keys(filesMap).length ? filesMap : undefined)
       setSyncs(m => ({ ...m, ...byDevice(r.items) }))
       setSyncSel(new Set())
       const queued = r.items.filter(s => s.status !== 'skipped').length
@@ -364,7 +485,7 @@ export default function Devices() {
             <div className="flex items-center gap-2 truncate">
               <span className="text-xs font-bold uppercase tracking-wider text-[#00b8ff]">{t('FORENSIC INVESTIGATION')}</span>
               <span className="text-xs text-slate-400">&bull;</span>
-              <span className="text-sm font-bold text-white truncate" title={caseName}>{caseName || L('Chưa chọn vụ án', 'No case selected')}</span>
+              <span className="sensitive text-sm font-bold text-white truncate" title={caseName}>{caseName || L('Chưa chọn vụ án', 'No case selected')}</span>
             </div>
           </div>
 
@@ -394,20 +515,19 @@ export default function Devices() {
                 className={`ml-0.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${usb.length ? 'bg-[#00b8ff]/20 text-[#00b8ff]' : 'bg-white/10 text-slate-400'}`}
                 title="Devices connected"
               >
-                <span className={`h-1.5 w-1.5 rounded-full ${usb.length ? 'bg-[#00b8ff]' : 'bg-slate-400'}`} aria-hidden="true" />
+                <span className={`h-1.5 w-1.5 rounded-full ${usb.length ? 'bg-[#00b8ff] animate-pulse' : 'bg-slate-400'}`} aria-hidden="true" />
                 {usb.length > 0 ? `${L('Kết nối', 'Connected')}: ${usb.length}` : L('Không kết nối', 'No connection')}
               </span>
             </span>
-            <select
-              value={theme}
-              onChange={e => setTheme(e.target.value as 'dark' | 'light' | 'normal')}
-              aria-label={L('Giao diện', 'Theme')}
-              className="rounded bg-white/10 hover:bg-white/20 text-white px-2 py-1 text-xs font-medium cursor-pointer outline-none [&>option]:text-navy"
+            <button
+              type="button"
+              onClick={openAudit}
+              title={L('Nhật ký hoạt động vụ án', 'Case activity log')}
+              className="inline-flex items-center gap-1.5 rounded bg-white/10 hover:bg-white/20 text-white px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer"
             >
-              <option value="dark">{L('Tối', 'Dark')}</option>
-              <option value="light">{L('Sáng', 'Light')}</option>
-              <option value="normal">{L('Thường', 'Normal')}</option>
-            </select>
+              <History size={13} aria-hidden="true" />
+              <span>{L('Nhật ký vụ án', 'Case Log')}</span>
+            </button>
             <button
               type="button"
               onClick={() => { logout(); navigate('/login') }}
@@ -602,6 +722,7 @@ export default function Devices() {
             const imageName = c.dev?.image_name || st?.image_name
             const serialDisplay = c.dev?.info?.serial || c.serial || c.usb?.serial || c.dev?.serial || null
             const isIos = c.usb ? !!c.usb.ios : (c.name.toLowerCase().includes('iphone') || c.name.toLowerCase().includes('ipad'))
+            const canImage = !!(c.usb?.ios || c.usb?.adb === 'device' || (c.usb?.type === 'hdd' && c.usb.size))
             const cfg = STAGE_CONFIG[stage]
             // đóng image lỗi (stage quay về 'new' kèm lỗi) cũng viền đỏ như trích xuất lỗi
             // lần chạy gần nhất lỗi (vd không kết nối được thiết bị) thì viền đỏ, kể cả máy đã trích xuất xong từ trước
@@ -612,8 +733,8 @@ export default function Devices() {
             const used = inf.storage_total ? inf.storage_total - (inf.storage_free ?? 0) : 0
             // thông tin máy đọc từ dữ liệu đã thu (getprop / ideviceinfo); dòng trống thì ẩn
             const infoRows: [string, string | null | undefined][] = [
-              ['Hệ điều hành', [inf.os, inf.patch && `bản vá ${inf.patch}`].filter(Boolean).join(' · ')],
-              ['IMEI', inf.imei], ['Số điện thoại', inf.phone], ['Nhà mạng', inf.sim], ['Bản build', inf.build],
+              [L('Hệ điều hành', 'OS'), [inf.os, inf.patch && `${L('bản vá', 'patch')} ${inf.patch}`].filter(Boolean).join(' · ')],
+              ['IMEI', inf.imei], [L('Số điện thoại', 'Phone'), inf.phone], [L('Nhà mạng', 'Carrier'), inf.sim], [L('Bản build', 'Build'), inf.build],
             ]
 
             return (
@@ -627,6 +748,7 @@ export default function Devices() {
                 onKeyDown={openable ? e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); act(c, 'done') } } : undefined}
                 className={`card group relative flex flex-col justify-center gap-2 rounded-xl border border-l-4 border-line ${border} bg-card p-3 shadow-sm outline-none transition-all duration-150 hover:z-20 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-within:z-20 ${openable ? 'cursor-pointer' : ''}`}
               >
+                {c.usb && <span aria-hidden="true" className="usb-ring" />}
                 {/* Thông tin cơ bản: ảnh/icon, tên, cắm cáp + hệ điều hành */}
                 <div className="flex items-center gap-2.5">
                   <div className="flex h-12 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-line bg-slate-50 text-primary">
@@ -640,10 +762,52 @@ export default function Devices() {
                   <div className="min-w-0 flex-1">
                     <h3 className="truncate font-display text-sm font-bold text-navy" title={c.name}>{c.name}</h3>
                     <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted">
-                      <span className={`h-2 w-2 shrink-0 rounded-full ${c.usb ? 'bg-emerald-500' : 'bg-slate-400'}`} aria-hidden="true" />
-                      {c.usb ? 'Đang cắm' : 'Đã rút cáp'} · {c.usb?.type === 'hdd' || c.dev?.type === 'hdd' ? 'Thẻ nhớ / USB' : isIos ? 'iOS' : 'Android'}
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${c.usb ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} aria-hidden="true" />
+                      {c.usb ? L('Đang cắm', 'Connected') : L('Đã rút cáp', 'Disconnected')} · {c.usb?.type === 'hdd' || c.dev?.type === 'hdd' ? L('Thẻ nhớ / USB', 'Card / USB') : isIos ? 'iOS' : 'Android'}
                     </p>
                   </div>
+                      <span className="group/st relative shrink-0 self-center" onClick={e => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          disabled={!caseName || isBusy || (stage === 'new' && !canImage)}
+                          onClick={e => { e.stopPropagation(); act(c, stage) }}
+                          aria-label={`${isVi ? cfg.label : cfg.enLabel} — ${isVi ? cfg.btn : cfg.enBtn}`}
+                          className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-all duration-150 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 hover:scale-105 active:scale-95 ${
+                            st?.error || stage === 'error'
+                              ? 'border-rose-400/45 bg-rose-500/15 text-rose-400 hover:border-rose-300 hover:bg-rose-500/25 hover:shadow-[0_0_12px_rgba(244,63,94,0.45)]'
+                              : stage === 'done'
+                              ? 'border-[#00b8ff]/55 bg-[#0077cc]/25 text-[#38c8ff] shadow-[0_0_10px_rgba(0,184,255,0.32)] hover:border-[#7de6ff] hover:bg-[#00b8ff]/35 hover:shadow-[0_0_16px_rgba(0,200,255,0.65)]'
+                              : stage === 'imaged' || stage === 'partial'
+                              ? 'border-amber-400/50 bg-amber-500/15 text-amber-300 hover:border-amber-300 hover:bg-amber-500/25 hover:shadow-[0_0_12px_rgba(251,191,36,0.4)]'
+                              : isBusy
+                              ? 'border-[#00b8ff]/50 bg-[#0077cc]/20 text-[#38c8ff] animate-pulse'
+                              : 'border-slate-400/30 bg-slate-500/10 text-slate-300 hover:border-[#38c8ff] hover:bg-[#00b8ff]/20 hover:text-white hover:shadow-[0_0_12px_rgba(0,184,255,0.45)]'
+                          }`}
+                        >
+                          {st?.error || stage === 'error' ? (
+                            <ShieldAlert size={16} />
+                          ) : stage === 'done' ? (
+                            <ShieldCheck size={16} />
+                          ) : stage === 'imaged' || stage === 'partial' || isBusy ? (
+                            <Shield size={16} />
+                          ) : (
+                            <ShieldOff size={16} />
+                          )}
+                        </button>
+                        <span role="tooltip" className="pointer-events-none invisible absolute bottom-full right-0 z-30 mb-1.5 w-max max-w-56 rounded-md border border-[#00b8ff]/40 bg-[#06142e]/95 px-2.5 py-1 text-[11px] font-medium leading-snug text-white opacity-0 shadow-[0_0_14px_rgba(0,184,255,0.35)] transition-opacity duration-100 group-hover/st:visible group-hover/st:opacity-100 group-focus-within/st:visible group-focus-within/st:opacity-100">
+                          {st?.error || stage === 'error'
+                            ? `${L('Lỗi', 'Error')} · ${L('Bấm để', 'Click to')} ${isVi ? cfg.btn : cfg.enBtn}`
+                            : stage === 'done'
+                            ? `${L('Đã trích xuất (SHA-256)', 'Extracted (SHA-256)')} · ${L('Bấm để', 'Click to')} ${isVi ? cfg.btn : cfg.enBtn}`
+                            : stage === 'imaged' || stage === 'partial'
+                            ? `${L('Đã đóng image (SHA-256)', 'Imaged (SHA-256)')} · ${L('Bấm để', 'Click to')} ${isVi ? cfg.btn : cfg.enBtn}`
+                            : isBusy
+                            ? statusText
+                            : canImage
+                            ? `${L('Chưa đóng image', 'Not imaged')} · ${L('Bấm để', 'Click to')} ${isVi ? cfg.btn : cfg.enBtn}`
+                            : L('Chưa đóng image · Cần cắm cáp & cấp quyền', 'Not imaged · Connect USB & trust device')}
+                        </span>
+                      </span>
                   {/* vòng tiến độ đóng image / trích xuất ở hàng trên (thay thanh ngang + % trong nhãn) */}
                   {/* chỉ khi đang đóng image / trích xuất; AI chạy nền sau trích xuất không hiện vòng (chỉ ghi % trong khung chi tiết) */}
                   {isBusy && st && (
@@ -656,6 +820,26 @@ export default function Devices() {
                     </div>
                   )}
                   {/* trạng thái: màu viền thẻ; chữ cho trình đọc màn hình và trong khung chi tiết khi di chuột */}
+                  {c.dev && (
+                    <div className="flex shrink-0 items-center gap-1" onClick={e => e.stopPropagation()}>
+                      <IconBtn
+                        disabled={isBusy}
+                        onClick={e => openRename(c.name, e)}
+                        label={`${L('Sửa tên', 'Rename')} ${c.name}`}
+                        tip={L('Sửa tên thiết bị', 'Rename device')}
+                      >
+                        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                      </IconBtn>
+                      <IconBtn
+                        disabled={isBusy}
+                        onClick={e => openDelete(c.name, e)}
+                        label={`${L('Xoá', 'Delete')} ${c.name}`}
+                        tip={L('Xoá thiết bị khỏi vụ án', 'Delete device from case')}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      </IconBtn>
+                    </div>
+                  )}
                   <span className="sr-only">{statusText}</span>
                   {st?.error && (
                     <span className="shrink-0 text-rose-600" title="Có lỗi, di chuột vào thẻ để xem">
@@ -708,13 +892,13 @@ export default function Devices() {
                   {infoRows.filter(([, v]) => v).map(([k, v]) => (
                     <div key={k} className="flex items-start justify-between gap-2 text-muted">
                       <span className="shrink-0">{k}</span>
-                      <span className="min-w-0 break-words text-right text-ink">{v}</span>
+                      <span className="sensitive min-w-0 break-words text-right font-mono tabular-nums text-ink">{v}</span>
                     </div>
                   ))}
                   <div className="flex items-center justify-between gap-2 text-muted">
                     <span>Serial</span>
                     <span className="flex min-w-0 items-center gap-1.5">
-                      <span className="truncate font-mono text-[11px] font-semibold text-ink">{serialDisplay ?? L('Chưa rõ', 'Unknown')}</span>
+                      <span className="sensitive truncate font-mono tabular-nums text-[11px] font-semibold text-ink">{serialDisplay ?? L('Chưa rõ', 'Unknown')}</span>
                       {serialDisplay && (
                         <button type="button" onClick={() => copyText(serialDisplay, `sn_${c.name}`)} className="shrink-0 text-[10px] text-primary hover:underline">
                           {copiedKey === `sn_${c.name}` ? L('Đã chép', 'Copied') : L('Chép', 'Copy')}
@@ -865,7 +1049,7 @@ export default function Devices() {
       </dialog>
 
       {/* Đồng bộ vụ án: chọn thiết bị đã đóng image -> hàng chờ gửi lên hệ thống trung tâm */}
-      <dialog ref={syncDlg} aria-labelledby="sync-title" onClick={closeOnBackdrop} className={DLG}>
+      <dialog ref={syncDlg} aria-labelledby="sync-title" onClick={closeOnBackdrop} className="m-auto w-[min(60rem,calc(100vw-2rem))] max-h-[90vh] rounded-xl bg-card p-0 text-ink shadow-xl backdrop:bg-navy/40">
         {(() => {
           const inCase = cards.filter(c => c.dev)
           const okNames = inCase.filter(c => c.dev?.image_name).map(c => c.dev?.name ?? c.name)
@@ -893,35 +1077,89 @@ export default function Devices() {
                 />
                 Chọn tất cả ({okNames.length} thiết bị có image)
               </label>
-              <fieldset className="max-h-72 space-y-1.5 overflow-y-auto">
+              <fieldset className="max-h-[52vh] space-y-2 overflow-y-auto pr-1">
                 <legend className="sr-only">Thiết bị trong vụ án</legend>
                 {!inCase.length && <p className="text-sm text-muted">Vụ án chưa có thiết bị</p>}
                 {inCase.map(c => {
                   const name = c.dev?.name ?? c.name
                   const ok = !!c.dev?.image_name
                   const s = syncs[name]
+                  const expanded = syncExpand === name
+                  const flist = syncFiles[name]
+                  const fsel = syncFileSel[name]
                   return (
-                    <label
-                      key={name}
-                      className={`flex items-center gap-3 rounded-lg border border-line px-3 py-2 text-sm ${ok ? 'cursor-pointer hover:bg-hover' : 'cursor-not-allowed opacity-60'}`}
-                    >
-                      <input
-                        type="checkbox"
-                        disabled={!ok}
-                        checked={syncSel.has(name)}
-                        onChange={() => toggleSync(name)}
-                        className="h-4 w-4 shrink-0 accent-primary"
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium text-ink">{name}</span>
-                        <span className="block truncate text-xs text-muted">{ok ? c.dev?.image_name : 'Chưa đóng image'}</span>
-                      </span>
-                      {s && (
-                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${SYNC_CLS[s.status]}`}>
-                          {SYNC_LABEL[s.status]}
-                        </span>
+                    <div key={name} className={`rounded-lg border border-line ${ok ? '' : 'opacity-60'}`}>
+                      <div className={`flex items-center gap-3 px-3 py-2 text-sm ${ok ? 'hover:bg-hover' : ''}`}>
+                        <input
+                          type="checkbox"
+                          disabled={!ok}
+                          checked={syncSel.has(name)}
+                          onChange={() => toggleSync(name)}
+                          className="h-4 w-4 shrink-0 accent-primary cursor-pointer disabled:cursor-not-allowed"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => toggleExpandSync(name)}
+                          className="min-w-0 flex-1 text-left cursor-pointer"
+                          title={L('Bấm để chọn tài liệu trong thiết bị', 'Click to select files in device')}
+                        >
+                          <span className="block truncate font-medium text-ink">{name}</span>
+                          <span className="block truncate text-xs text-muted">
+                            {ok ? c.dev?.image_name : L('Chưa đóng image', 'Not imaged yet')}
+                            {c.dev?.count ? ` · ${c.dev.count.toLocaleString(isVi ? 'vi' : 'en')} ${L('tài liệu', 'files')}` : ''}
+                            {fsel ? ` (${L('đã chọn', 'selected')} ${fsel.size})` : ''}
+                          </span>
+                        </button>
+                        {s && (
+                          <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${(isVi ? SYNC_LABEL[s.status] : ({ pending: 'Pending', sending: 'Sending', done: 'Synced', error: 'Error', skipped: 'Skipped' }[s.status])) ? SYNC_CLS[s.status] : ''}`}>
+                            {isVi ? SYNC_LABEL[s.status] : ({ pending: 'Pending', sending: 'Sending', done: 'Synced', error: 'Error', skipped: 'Skipped' }[s.status])}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => toggleExpandSync(name)}
+                          aria-label={L('Chọn tài liệu', 'Select files')}
+                          className="shrink-0 rounded p-1 text-muted hover:bg-white/10 hover:text-ink cursor-pointer"
+                        >
+                          <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180 text-primary' : ''}`} />
+                        </button>
+                      </div>
+                      {expanded && (
+                        <div className="border-t border-line bg-black/20 px-3 py-2 text-xs">
+                          {syncFilesBusy === name ? (
+                            <p className="py-2 text-center text-muted">{L('Đang tải danh sách tài liệu…', 'Loading files…')}</p>
+                          ) : !flist?.length ? (
+                            <p className="py-2 text-center text-muted">{L('Chưa có tài liệu nào được trích xuất.', 'No extracted files yet.')}</p>
+                          ) : (
+                            <div className="space-y-1">
+                              <label className="flex items-center gap-2 pb-1 border-b border-line/60 font-medium text-ink cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={flist.length > 0 && flist.every(f => fsel?.has(f.id))}
+                                  onChange={e => toggleAllSyncFiles(name, e.target.checked)}
+                                  className="h-3.5 w-3.5 accent-primary"
+                                />
+                                <span>{L('Chọn tất cả tài liệu', 'Select all files')} ({flist.length})</span>
+                              </label>
+                              <div className="max-h-64 space-y-1 overflow-y-auto pt-1 pr-1">
+                                {flist.map(f => (
+                                  <label key={f.id} className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-white/5 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={!!fsel?.has(f.id)}
+                                      onChange={() => toggleSyncFile(name, f.id)}
+                                      className="h-3.5 w-3.5 shrink-0 accent-primary"
+                                    />
+                                    <span className="min-w-0 flex-1 truncate text-ink" title={f.name}>{f.name}</span>
+                                    <span className="shrink-0 font-mono tabular-nums text-[10.5px] text-muted">{fmtSize(f.size)}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       )}
-                    </label>
+                    </div>
                   )
                 })}
               </fieldset>
@@ -942,6 +1180,149 @@ export default function Devices() {
           )
         })()}
       </dialog>
+      {/* Dialog sửa tên thiết bị */}
+      <dialog ref={renameDlg} onClick={e => e.target === renameDlg.current && renameDlg.current.close()} className={DLG}>
+        <form onSubmit={submitRename} className="p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="flex items-center gap-2 font-display text-base font-semibold text-navy">
+              <Pencil className="h-4 w-4 text-primary" aria-hidden="true" />
+              <span>{L('Đổi tên thiết bị', 'Rename Device')}</span>
+            </h2>
+            <button type="button" onClick={() => renameDlg.current?.close()} aria-label={L('Đóng', 'Close')} className={CLOSE}><X className="h-4 w-4" /></button>
+          </div>
+          {!renameConfirm ? (
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-muted">{L('Tên thiết bị mới', 'New device name')}</label>
+              <input
+                type="text"
+                value={renameVal}
+                onChange={e => { setRenameVal(e.target.value); setRenameErr('') }}
+                className={FIELD}
+                autoFocus
+              />
+              {renameErr && <p className="mt-1.5 text-xs text-danger">{renameErr}</p>}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-cyan-400/35 bg-cyan-500/10 p-3 text-sm text-ink leading-relaxed">
+              {L('Xác nhận đổi tên thiết bị', 'Confirm renaming device')} <strong className="text-white">{renamingDev}</strong> {L('thành', 'to')} <strong className="text-[#38c8ff]">{renameVal.trim()}</strong>?
+              {renameErr && <p className="mt-1.5 text-xs text-danger">{renameErr}</p>}
+            </div>
+          )}
+          <div className="flex justify-end gap-2 pt-1">
+            {renameConfirm ? (
+              <button type="button" onClick={() => { setRenameConfirm(false); setRenameErr('') }} className={BTN2}>{L('Quay lại', 'Back')}</button>
+            ) : (
+              <button type="button" onClick={() => renameDlg.current?.close()} className={BTN2}>{L('Hủy', 'Cancel')}</button>
+            )}
+            <button type="submit" disabled={renameBusy} className={BTN}>
+              {renameBusy ? L('Đang lưu…', 'Saving…') : renameConfirm ? L('Xác nhận đổi tên', 'Confirm Rename') : L('Tiếp tục', 'Continue')}
+            </button>
+          </div>
+        </form>
+      </dialog>
+
+      {/* Dialog xác nhận xoá thiết bị */}
+      <dialog ref={delDlg} onClick={e => e.target === delDlg.current && delDlg.current.close()} className={DLG}>
+        <div className="p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="flex items-center gap-2 font-display text-base font-semibold text-rose-400">
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+              <span>{L('Xoá thiết bị', 'Delete Device')}</span>
+            </h2>
+            <button type="button" onClick={() => delDlg.current?.close()} aria-label={L('Đóng', 'Close')} className={CLOSE}><X className="h-4 w-4" /></button>
+          </div>
+          <p className="text-sm text-ink leading-relaxed">
+            {L('Xoá thiết bị', 'Delete device')} <strong className="text-white">{deletingDev}</strong> {L('khỏi vụ án', 'from case')} <strong>{caseName}</strong>? {L('Toàn bộ dữ liệu đã trích xuất của thiết bị này sẽ chuyển vào thùng rác.', 'All extracted data for this device will be moved to trash.')}
+          </p>
+          {delErr && <p className="text-xs text-danger">{delErr}</p>}
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" onClick={() => delDlg.current?.close()} className={BTN2}>{L('Hủy', 'Cancel')}</button>
+            <button type="button" disabled={delBusy} onClick={confirmDelete} className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-rose-600 hover:bg-rose-500 px-4 text-sm font-medium text-white cursor-pointer disabled:opacity-50">
+              {delBusy ? L('Đang xoá…', 'Deleting…') : L('Xoá thiết bị', 'Delete')}
+            </button>
+          </div>
+        </div>
+      </dialog>
+
+      {/* Nhật ký vụ án (Audit log) */}
+      <dialog ref={auditDlg} onClick={e => e.target === auditDlg.current && auditDlg.current.close()} className={`${DLG} w-[min(42rem,calc(100vw-2rem))]`}>
+        <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
+          <h2 className="flex items-center gap-2 font-display text-base font-semibold text-navy">
+            <History className="h-4 w-4 text-primary" aria-hidden="true" />
+            <span>{L('Nhật ký vụ án', 'Case Log')}{auditOnlyCase && caseName ? ` · ${caseName}` : ''}</span>
+          </h2>
+          <div className="flex items-center gap-2">
+            {caseName && (
+              <button
+                type="button"
+                onClick={() => setAuditOnlyCase(!auditOnlyCase)}
+                className="rounded border border-line px-2 py-1 text-xs text-ink hover:bg-hover cursor-pointer"
+              >
+                {auditOnlyCase ? L('Vụ này', 'This case') : L('Tất cả', 'All cases')}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={loadAudit}
+              disabled={auditBusy}
+              title={L('Làm mới', 'Refresh')}
+              className="rounded border border-line p-1.5 text-ink hover:bg-hover cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${auditBusy ? 'animate-spin' : ''}`} />
+            </button>
+            <button type="button" onClick={() => auditDlg.current?.close()} aria-label={L('Đóng', 'Close')} className={CLOSE}><X className="h-4 w-4" /></button>
+          </div>
+        </div>
+        <div className="max-h-[65vh] overflow-y-auto p-4">
+          {(() => {
+            const list = auditOnlyCase && caseName
+              ? auditItems.filter(a => !a.target || a.target === caseName || a.target.startsWith(`${caseName}/`) || a.target.includes(caseName))
+              : auditItems
+            if (auditBusy && !list.length) return <p className="py-8 text-center text-sm text-muted">{L('Đang tải nhật ký…', 'Loading log…')}</p>
+            if (!list.length) return <p className="py-8 text-center text-sm text-muted">{L('Chưa có nhật ký hoạt động nào.', 'No activity recorded yet.')}</p>
+            const actLabel = (a: string) => (isVi ? ({
+              'case.create': 'Tạo vụ án',
+              'case.rename': 'Đổi tên vụ án',
+              'case.delete': 'Xoá vụ án',
+              'device.create': 'Thêm thiết bị',
+              'device.delete': 'Xoá thiết bị',
+              'device.rename': 'Đổi tên thiết bị',
+              'device.image': 'Đóng image',
+              'device.extract': 'Trích xuất',
+              'pull.start': 'Thu thập ADB',
+              'package.create': 'Đóng gói chứng cứ',
+              'sync.queue': 'Đồng bộ',
+              'phone.connect': 'Cắm thiết bị',
+              'phone.disconnect': 'Rút thiết bị',
+              'file.delete': 'Xoá tệp',
+            }[a] ?? a) : a)
+            return (
+              <ul className="divide-y divide-line text-xs">
+                {list.map(a => (
+                  <li key={a.id} className="flex items-start justify-between gap-3 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded bg-primary-soft px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-primary">
+                          {actLabel(a.action)}
+                        </span>
+                        {a.target && <span className="truncate font-medium text-ink">{a.target}</span>}
+                      </div>
+                      {a.detail && <p className="mt-0.5 truncate text-[11px] text-muted">{a.detail}</p>}
+                    </div>
+                    <span className="shrink-0 font-mono tabular-nums text-[11px] text-muted">{formatDateTime(a.created_at)}</span>
+                  </li>
+                ))}
+              </ul>
+            )
+          })()}
+        </div>
+      </dialog>
+      {toast && (
+        <div role="status" className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-xl border border-[#00b8ff]/50 bg-[#061836]/95 px-4 py-2.5 text-sm font-medium text-white shadow-[0_0_24px_rgba(0,184,255,0.4)] backdrop-blur-md">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-[#38c8ff]" aria-hidden="true" />
+          <span>{toast}</span>
+        </div>
+      )}
     </div>
   )
 }

@@ -62,40 +62,32 @@ def create_package(case_name, source_root, dest_dir, progress=None):
     ts = time.strftime("%Y%m%d-%H%M%S")
     safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in case_name)
     arc = dest_dir / f"{safe}-{ts}.tar"
-    man = dest_dir / f"{safe}-{ts}.manifest.json"
-
     row_id = next_id("packages")
     db.packages.insert_one({"id": row_id, "case_name": case_name, "source": str(source_root), "name": arc.name, "size": 0,
                             "sha256": "", "status": "running", "error": None, "log": None, "created_at": indexer.now()})
 
     entries = _file_entries(source_root)
     total = sum(s for _, _, s in entries) or 1
-    files, done = [], 0
+    done = 0
     _set(row_id, log=f"Đang đóng gói {len(entries)} file…")
     try:
         with arc.open("wb", buffering=1 << 20) as raw:
-            hw = _HashWriter(raw)
-            with tarfile.open(fileobj=hw, mode="w|", format=tarfile.PAX_FORMAT, bufsize=1 << 20) as tf:
+            with tarfile.open(fileobj=raw, mode="w|", format=tarfile.PAX_FORMAT, bufsize=1 << 20) as tf:
                 tf.copybufsize = 1 << 20
                 for rel, abs_path, size in entries:
                     ti = tf.gettarinfo(str(abs_path), arcname=rel)
                     with abs_path.open("rb") as f:
-                        hr = _HashReader(f)
-                        tf.addfile(ti, hr)
-                    files.append({"rel": rel, "size": ti.size, "sha256": hr.h.hexdigest()})
+                        tf.addfile(ti, f)
                     done += size
                     if progress:
                         progress(done, total)
-        manifest = {"case": case_name, "source": str(source_root), "created_at": indexer.now(), "files": files}
-        man.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
-        _set(row_id, status="done", size=arc.stat().st_size, sha256=hw.h.hexdigest(),
+        _set(row_id, status="done", size=arc.stat().st_size,
              log=f"Xong: {arc.name} ({arc.stat().st_size:,} bytes)")
     except Exception as e:
         _set(row_id, status="error", error=str(e), log=f"Lỗi: {e}")
         arc.unlink(missing_ok=True)
-        man.unlink(missing_ok=True)
         raise
-    return row_id, arc, manifest
+    return row_id, arc, None
 
 
 def verify_package(archive_path: Path, manifest_path: Path):

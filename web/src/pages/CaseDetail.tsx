@@ -29,9 +29,9 @@ import {
   LogOut,
   Plus,
   Trash2,
-} from 'lucide-react'
+  History, ShieldCheck } from 'lucide-react'
 import { api, fmtSize } from '../api'
-import type { Device, DeviceType, FileItem, FilesPage, Graph, PackageItem } from '../api'
+import type { AuditEntry, Device, DeviceType, FileItem, FilesPage, Graph, PackageItem } from '../api'
 import { graphHtml } from '../graphHtml'
 import { useI18n } from '../i18n'
 import { logout } from '../auth'
@@ -133,6 +133,21 @@ const fileMeta = (f: FileItem) => ({
   'OCR text': f.ocr_text || null,
 })
 
+function HighlightText({ text, query }: { text?: string | null; query: string }) {
+  const s = text || '-'
+  const q = query.trim()
+  if (!q || s === '-') return <>{s}</>
+  const idx = s.toLowerCase().indexOf(q.toLowerCase())
+  if (idx === -1) return <>{s}</>
+  return (
+    <>
+      {s.slice(0, idx)}
+      <mark className="rounded bg-[#00b8ff]/30 px-0.5 text-inherit">{s.slice(idx, idx + q.length)}</mark>
+      {s.slice(idx + q.length)}
+    </>
+  )
+}
+
 export default function CaseDetail() {
   const name = useParams().name ?? ''
   const [sp] = useSearchParams()
@@ -161,7 +176,7 @@ export default function CaseDetail() {
   // Danh sách vụ án để chọn đổi dự án (app giờ chỉ có 1 trang Magnet).
   const [caseList, setCaseList] = useState<{ name: string }[]>([])
   const navigate = useNavigate()
-  const { lang, t, theme, setTheme } = useI18n()
+  const { lang, t, theme } = useI18n()
   const isVi = lang === 'vi'
   const L = (vi: string, en: string) => (isVi ? vi : en)
   useEffect(() => {
@@ -202,6 +217,13 @@ export default function CaseDetail() {
   const [openUploadModal, setOpenUploadModal] = useState(false)
   const [openPackageModal, setOpenPackageModal] = useState(false)
   const [openDeviceMgrModal, setOpenDeviceMgrModal] = useState(false)
+  const [openAuditModal, setOpenAuditModal] = useState(false)
+  const [auditItems, setAuditItems] = useState<AuditEntry[]>([])
+  const [auditBusy, setAuditBusy] = useState(false)
+  const loadAudit = () => {
+    setAuditBusy(true)
+    api.audit(100).then(setAuditItems).catch(() => setAuditItems([])).finally(() => setAuditBusy(false))
+  }
   const [openGraphModal, setOpenGraphModal] = useState(false)
   const [openCaseMgrModal, setOpenCaseMgrModal] = useState(false)
 
@@ -736,7 +758,7 @@ export default function CaseDetail() {
               <span className="text-xs text-slate-400">&bull;</span>
               {/* vào từ thẻ thiết bị (?device=) thì hiện "vụ án - thiết bị" */}
               <span className="text-sm font-bold text-white truncate" title={activeDevice ? `${name} - ${activeDevice}` : name}>
-                {name || 'vụ án c1'}{activeDevice && ` - ${activeDevice}`}
+                <span className="sensitive">{name || 'vụ án c1'}{activeDevice && ` - ${activeDevice}`}</span>
               </span>
             </div>
           </div>
@@ -778,20 +800,19 @@ export default function CaseDetail() {
                 className={`ml-0.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${live.bad ? 'bg-red-500/20 text-red-300' : live.n ? 'bg-[#00b8ff]/20 text-[#00b8ff]' : 'bg-white/10 text-slate-400'}`}
                 title="Devices connected"
               >
-                <span className={`h-1.5 w-1.5 rounded-full ${live.bad ? 'bg-red-400' : live.n ? 'bg-[#00b8ff]' : 'bg-slate-400'}`} aria-hidden="true" />
+                <span className={`h-1.5 w-1.5 rounded-full ${live.bad ? 'bg-red-400 animate-pulse' : live.n ? 'bg-[#00b8ff] animate-pulse' : 'bg-slate-400'}`} aria-hidden="true" />
                 {live.n > 0 ? `${t('Connected')}: ${live.n}${live.bad ? ` · ${live.bad} ${t('errors')}` : ''}` : t('No connection')}
               </span>
             </button>
-            <select
-              value={theme}
-              onChange={e => setTheme(e.target.value as 'dark' | 'light' | 'normal')}
-              aria-label={L('Giao diện', 'Theme')}
-              className="rounded bg-white/10 hover:bg-white/20 text-white px-2 py-1 text-xs font-medium cursor-pointer outline-none [&>option]:text-navy"
+            <button
+              type="button"
+              onClick={() => { loadAudit(); setOpenAuditModal(true) }}
+              title={L('Nhật ký vụ án', 'Case Log')}
+              className="inline-flex items-center gap-1.5 rounded bg-white/10 hover:bg-white/20 text-white px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer"
             >
-              <option value="dark">{L('Tối', 'Dark')}</option>
-              <option value="light">{L('Sáng', 'Light')}</option>
-              <option value="normal">{L('Thường', 'Normal')}</option>
-            </select>
+              <History size={13} />
+              <span>{L('Nhật ký vụ án', 'Case Log')}</span>
+            </button>
             <button
               type="button"
               onClick={() => { logout(); navigate('/login') }}
@@ -1478,7 +1499,7 @@ export default function CaseDetail() {
                           }`}
                           title={item.chatId || item.displayName}
                         >
-                          {item.chatId || item.displayName}
+                          <HighlightText text={item.chatId || item.displayName} query={activeSearch} />
                         </td>
                         <td
                           className={`py-1.5 px-2.5 border-r truncate max-w-28 ${
@@ -1486,7 +1507,7 @@ export default function CaseDetail() {
                           }`}
                           title={item.author}
                         >
-                          {item.author || '-'}
+                          <span className="sensitive"><HighlightText text={item.author} query={activeSearch} /></span>
                         </td>
                         <td
                           className={`py-1.5 px-2.5 border-r truncate max-w-28 ${
@@ -1494,14 +1515,14 @@ export default function CaseDetail() {
                           }`}
                           title={item.recipient}
                         >
-                          {item.recipient || '-'}
+                          <span className="sensitive"><HighlightText text={item.recipient} query={activeSearch} /></span>
                         </td>
                         <td
                           className={`py-1.5 px-2.5 border-r whitespace-nowrap text-[11.5px] ${
                             isSelected ? 'border-blue-500/40 text-blue-100' : 'border-slate-200/70 text-slate-500'
                           }`}
                         >
-                          {item.timestamp || '-'}
+                          <span className="font-mono tabular-nums">{item.timestamp || '-'}</span>
                         </td>
                         <td
                           className={`py-1.5 px-3 truncate max-w-md ${
@@ -1509,7 +1530,7 @@ export default function CaseDetail() {
                           }`}
                           title={item.content}
                         >
-                          {item.content || '-'}
+                          <span className="sensitive"><HighlightText text={item.content} query={activeSearch} /></span>
                         </td>
                       </tr>
                     )
@@ -1653,6 +1674,12 @@ export default function CaseDetail() {
                 <div className="p-3 bg-[#fbfcfd] flex-1">
                   <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                     <span>{t('DETAILS & ARTIFACT INFORMATION')}</span>
+                    {selectedArtifact.metadata['SHA-256 hash'] && (
+                      <span className="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold normal-case text-emerald-400 border border-emerald-400/30">
+                        <ShieldCheck size={11} />
+                        <span>SHA-256 Verified</span>
+                      </span>
+                    )}
                   </div>
 
                   <dl className="divide-y divide-slate-200/70 text-xs">
@@ -1663,7 +1690,7 @@ export default function CaseDetail() {
                           <dt className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
                             {t(key)}
                           </dt>
-                          <dd className="text-slate-800 break-all select-text font-mono text-[11.5px]">
+                          <dd className="sensitive text-slate-800 break-all select-text font-mono tabular-nums text-[11.5px]">
                             {String(val)}
                           </dd>
                         </div>
@@ -1846,6 +1873,29 @@ export default function CaseDetail() {
         )}
       </div>
 
+      {/* Thanh trạng thái đáy màn hình (Status bar) */}
+      <footer className={`h-7 shrink-0 flex items-center justify-between px-3 text-[11px] font-mono tabular-nums border-t ${
+        theme === 'dark'
+          ? 'bg-[#050f22]/90 border-cyan-400/25 text-slate-300'
+          : theme === 'light'
+          ? 'bg-white/85 border-sky-300/40 text-slate-600'
+          : 'bg-[#e8eef3] border-[#d3dbe3] text-slate-600'
+      }`}>
+        <div className="flex items-center gap-3 truncate">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span>{L('Hệ thống sẵn sàng', 'System Online')}</span>
+          </span>
+          <span className="opacity-40">|</span>
+          <span className="truncate sensitive">{L('Thiết bị:', 'Device:')} {activeDevice || L('Tất cả', 'All')}</span>
+          <span className="opacity-40">|</span>
+          <span>{L('Hiển thị:', 'Showing:')} {filteredArtifacts.length.toLocaleString(isVi ? 'vi' : 'en')} / {shownTotal.toLocaleString(isVi ? 'vi' : 'en')}</span>
+        </div>
+        <div className="hidden sm:flex items-center gap-3 shrink-0">
+          <span>{t('Time zone: GMT+7 (Hanoi, Bangkok)')}</span>
+        </div>
+      </footer>
+
       {/* =========================================================================
           MODALS QUẢN LÝ & TÁC VỤ
           ========================================================================= */}
@@ -1942,6 +1992,50 @@ export default function CaseDetail() {
             else window.location.reload()
           }}
         />
+      )}
+
+      {openAuditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setOpenAuditModal(false)}>
+          <div className="w-full max-w-2xl rounded-xl bg-white shadow-2xl overflow-hidden flex flex-col max-h-[82vh]" onClick={e => e.stopPropagation()}>
+            <div className="flex h-11 items-center justify-between bg-[#0a1f44] text-white px-4">
+              <span className="font-bold text-xs flex items-center gap-2 text-[#00b8ff]">
+                <History size={14} />
+                {L('Nhật ký vụ án', 'Case Log')}: {name}
+              </span>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={loadAudit} disabled={auditBusy} className="text-slate-300 hover:text-white cursor-pointer text-xs">
+                  {auditBusy ? L('Đang tải…', 'Loading…') : L('Làm mới', 'Refresh')}
+                </button>
+                <button type="button" onClick={() => setOpenAuditModal(false)} className="text-slate-400 hover:text-white cursor-pointer">
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <div className="p-4 flex-1 overflow-auto">
+              {(() => {
+                const list = auditItems.filter(a => !a.target || a.target === name || a.target.startsWith(`${name}/`) || a.target.includes(name))
+                if (auditBusy && !list.length) return <p className="py-8 text-center text-xs text-slate-400">{L('Đang tải nhật ký…', 'Loading log…')}</p>
+                if (!list.length) return <p className="py-8 text-center text-xs text-slate-400">{L('Chưa có nhật ký hoạt động nào cho vụ án này.', 'No activity recorded for this case.')}</p>
+                return (
+                  <ul className="divide-y divide-slate-200 text-xs">
+                    {list.map(a => (
+                      <li key={a.id} className="flex items-start justify-between gap-3 py-2">
+                        <div className="min-w-0 flex-1">
+                          <span className="rounded bg-[#0077cc]/15 px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-[#0077cc] mr-2">
+                            {a.action}
+                          </span>
+                          {a.target && <span className="font-medium text-slate-800">{a.target}</span>}
+                          {a.detail && <p className="mt-0.5 text-[11px] text-slate-500">{a.detail}</p>}
+                        </div>
+                        <span className="shrink-0 font-mono tabular-nums text-[11px] text-slate-400">{a.created_at}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )
+              })()}
+            </div>
+          </div>
+        </div>
       )}
 
       {openGraphModal && (

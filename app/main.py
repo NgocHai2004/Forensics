@@ -6,6 +6,7 @@ import plistlib
 import re
 import secrets
 import shutil
+import tarfile
 import sqlite3
 import subprocess
 import threading
@@ -439,6 +440,37 @@ def delete_device(req: DeviceDelReq):
         db.devices.delete_one({"case_name": req.case, "name": req.name})
     _audit(conn, "device.delete", f"{req.case}/{req.name}")
     return _to_trash(rows)
+
+
+class DeviceRenameReq(BaseModel):
+    case: str
+    name: str
+    new_name: str
+
+
+@app.post("/api/devices/rename")
+def rename_device(req: DeviceRenameReq):
+    """Đổi tên thiết bị trong vụ án (cập nhật Mongo + SQLite)."""
+    new_name = clean_name(req.new_name)
+    if not new_name:
+        raise HTTPException(400, "thiếu tên thiết bị mới")
+    if new_name == req.name:
+        return {"renamed": False, "name": new_name}
+    with lock:
+        if (current_thread and current_thread.is_alive()) or any(s["running"] for s in _all_states().values()):
+            raise HTTPException(409, "đang index hoặc kéo dữ liệu, thử lại sau")
+        existing = [d["name"] for d in indexer.devices(conn, req.case)["items"]]
+        if req.name not in existing:
+            raise HTTPException(404, "không có thiết bị")
+        if new_name in existing:
+            raise HTTPException(409, "tên thiết bị đã tồn tại")
+        with conn:
+            conn.execute("UPDATE files SET device=? WHERE collection=? AND device=?", (new_name, req.case, req.name))
+        db.devices.update_one({"case_name": req.case, "name": req.name}, {"$set": {"name": new_name}})
+        db.sessions.update_many({"case_name": req.case, "device": req.name}, {"$set": {"device": new_name}})
+        db.sync_queue.update_many({"case_name": req.case, "device": req.name}, {"$set": {"device": new_name}})
+    _audit(conn, "device.rename", f"{req.case}/{req.name} -> {new_name}")
+    return {"renamed": True, "name": new_name}
 
 
 class FileDelReq(BaseModel):
@@ -1581,6 +1613,66 @@ def _disk_collect(disk: dict, dest: Path, st: dict) -> tuple[int, int]:
     return n, s
 
 
+def _android_tar_stream(serial: str, dest: Path, st: dict, total: int) -> tuple[int, int] | None:
+    """Stream tar trực tiếp qua adb exec-out (1 luồng USB liên tục, không tốn bộ nhớ tạm trên điện thoại).
+    Trả (files, bytes) nếu thành công; trả None nếu thiết bị không hỗ trợ tar hoặc stream rỗng để fallback về adb pull."""
+    try:
+        has_tar = subprocess.run([ADB, "-s", serial, "shell", "command -v tar >/dev/null 2>&1"],
+                                 capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not has_tar:
+        return None
+
+    out_root = dest / "sdcard"
+    out_root.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.Popen([ADB, "-s", serial, "exec-out", "cd /sdcard && tar -cf - . 2>/dev/null"],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    n = s = 0
+    last_ui = time.monotonic()
+    st.update(log="Đang kéo dữ liệu (stream tar qua USB)…")
+    try:
+        with tarfile.open(fileobj=proc.stdout, mode="r|", bufsize=1 << 20) as tf:
+            for m in tf:
+                rel = Path(m.name.lstrip("./"))
+                if not rel.parts or rel.is_absolute() or ".." in rel.parts:
+                    continue
+                target = out_root / rel
+                if m.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                elif m.isfile():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    src_f = tf.extractfile(m)
+                    if src_f is None:
+                        continue
+                    with src_f, target.open("wb") as dst_f:
+                        shutil.copyfileobj(src_f, dst_f, 1 << 20)
+                    if m.mtime:
+                        try:
+                            os.utime(target, (m.mtime, m.mtime))
+                        except OSError:
+                            pass
+                    n += 1
+                    s += m.size
+                    now = time.monotonic()
+                    if now - last_ui >= 0.5:
+                        st.update(files=n, bytes=s, pct=min(99, round(100 * s / total)) if total else 0)
+                        last_ui = now
+    except (tarfile.TarError, OSError):
+        pass
+    finally:
+        if proc.stdout:
+            proc.stdout.close()
+        proc.wait(timeout=30)
+        if proc.stderr:
+            proc.stderr.close()
+
+    if n == 0:
+        return None
+    st.update(files=n, bytes=s, pct=min(99, round(100 * s / total)) if total else 0)
+    return n, s
+
+
 def _acquire_worker(serial: str, case: str, device: str, dest: Path):
     """ĐÓNG IMAGE: kéo dữ liệu thô + thu thập hệ thống (androidqf), rồi đóng gói tar.gz kèm manifest SHA256.
     Xong -> stage 'imaged'. (Chưa index; index là bước Trích xuất riêng.)"""
@@ -1619,24 +1711,29 @@ def _acquire_worker(serial: str, case: str, device: str, dest: Path):
                     aqf_err.append(str(e)[:120])
             aqf_t = threading.Thread(target=aqf, daemon=True)
             aqf_t.start()
-            todo, running, rcs = _pull_units(serial, dest), [], []
-            with log.open("w") as lf:  # ghi ra file, không dùng pipe: nhiều dòng lỗi quyền có thể làm đầy pipe và treo adb
-                while todo or running:
-                    while todo and len(running) < PULL_STREAMS:
-                        remote, local = todo.pop(0)
-                        local.mkdir(parents=True, exist_ok=True)
-                        running.append(subprocess.Popen([ADB, "-s", serial, "pull", "-a", remote, str(local)],
-                                                        stdout=lf, stderr=subprocess.STDOUT))
-                    time.sleep(2)
-                    rcs += [p.returncode for p in running if p.poll() is not None]
-                    running = [p for p in running if p.returncode is None]
-                    n, s = (x - b for x, b in zip(_tree(dest), (base_n, base_s)))
-                    # du tính theo block nên lệch chút với kích thước thật: giữ 99% tới khi adb xong
-                    st.update(files=n, bytes=s, pct=min(99, round(100 * s / total)) if total else 0)
-            n, s = (x - b for x, b in zip(_tree(dest), (base_n, base_s)))
-            last = (log.read_text(errors="replace").strip().splitlines() or [""])[-1][:200]
-            if any(rcs) and not n:  # mã lỗi khác 0 cũng xảy ra khi chỉ vài file bị chặn quyền: chỉ báo lỗi khi không kéo được gì
-                raise RuntimeError(last or "adb pull lỗi")
+            streamed = _android_tar_stream(serial, dest, st, total)
+            if streamed is not None:
+                n, s = streamed
+                last = f"Stream tar hoàn tất ({n:,} tệp)"
+            else:
+                todo, running, rcs = _pull_units(serial, dest), [], []
+                with log.open("w") as lf:  # ghi ra file, không dùng pipe: nhiều dòng lỗi quyền có thể làm đầy pipe và treo adb
+                    while todo or running:
+                        while todo and len(running) < PULL_STREAMS:
+                            remote, local = todo.pop(0)
+                            local.mkdir(parents=True, exist_ok=True)
+                            running.append(subprocess.Popen([ADB, "-s", serial, "pull", "-a", remote, str(local)],
+                                                            stdout=lf, stderr=subprocess.STDOUT))
+                        time.sleep(2)
+                        rcs += [p.returncode for p in running if p.poll() is not None]
+                        running = [p for p in running if p.returncode is None]
+                        n, s = (x - b for x, b in zip(_tree(dest), (base_n, base_s)))
+                        # du tính theo block nên lệch chút với kích thước thật: giữ 99% tới khi adb xong
+                        st.update(files=n, bytes=s, pct=min(99, round(100 * s / total)) if total else 0)
+                n, s = (x - b for x, b in zip(_tree(dest), (base_n, base_s)))
+                last = (log.read_text(errors="replace").strip().splitlines() or [""])[-1][:200]
+                if any(rcs) and not n:  # mã lỗi khác 0 cũng xảy ra khi chỉ vài file bị chặn quyền: chỉ báo lỗi khi không kéo được gì
+                    raise RuntimeError(last or "adb pull lỗi")
             # rút cáp giữa chừng: adb lỗi nhưng đã kéo được một phần -> không đóng gói image thiếu như image đủ
             if subprocess.run([ADB, "-s", serial, "get-state"], capture_output=True, text=True, timeout=15).stdout.strip() != "device":
                 raise RuntimeError("Mất kết nối với điện thoại giữa chừng (rút cáp?): cắm lại rồi đóng image lại")
@@ -1848,6 +1945,7 @@ def device_image(req: DeviceActionReq):
 class SyncReq(BaseModel):
     case: str
     devices: list[str]
+    files: dict[str, list[int]] | None = None
 
 
 # Đồng bộ về hệ thống trung tâm (Module 8): mỗi thiết bị gửi bản image (gói tar + manifest SHA-256) + metadata.
@@ -1874,15 +1972,20 @@ def sync_queue(req: SyncReq):
         if not pkg:
             out.append({"device": device, "status": "skipped", "error": "chưa đóng image"})
             continue
-        if dup := db.syncs.find_one({"case_name": case, "device": device, "sha256": pkg["sha256"],
-                                     "status": {"$in": ["pending", "sending", "done"]}}, {"_id": 0}):
-            out.append(dup)
-            continue
+        fids = (req.files or {}).get(device)
+        if not fids:
+            dup_key = {"sha256": pkg["sha256"]} if pkg.get("sha256") else {"package_id": pkg["id"]}
+            if dup := db.syncs.find_one({"case_name": case, "device": device, **dup_key,
+                                         "status": {"$in": ["pending", "sending", "done"]}}, {"_id": 0}):
+                out.append(dup)
+                continue
         row = {"id": next_id("syncs"), "case_name": case, "device": device, "package_id": pkg["id"],
-               "package_name": pkg["name"], "sha256": pkg["sha256"], "size": pkg.get("size", 0), "status": "pending",
-               "error": None, "created_at": indexer.now(), "finished_at": None}
+               "package_name": pkg["name"], "sha256": pkg["sha256"], "size": pkg.get("size", 0),
+               "file_ids": fids or None, "file_count": len(fids) if fids else None,
+               "status": "pending", "error": None, "created_at": indexer.now(), "finished_at": None}
         db.syncs.insert_one(dict(row))  # bản sao: insert_one gắn _id (ObjectId) vào dict, không trả JSON được
-        _audit(conn, "sync.queue", f"{case}/{device}", pkg["name"])
+        detail = f"{pkg['name']} ({len(fids)} tài liệu)" if fids else pkg["name"]
+        _audit(conn, "sync.queue", f"{case}/{device}", detail)
         out.append(row)
     return {"items": out}
 
