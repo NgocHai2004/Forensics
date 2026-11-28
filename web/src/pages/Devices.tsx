@@ -491,7 +491,7 @@ export default function Devices() {
   }
 
   // 20 thẻ/trang = 4 hàng x 5 cột (dashboard biểu đồ ở trên); số trang giảm khi bớt máy thì kẹp về trang cuối
-  const PAGE = 20
+  const PAGE = 15
   const pages = Math.max(1, Math.ceil(cards.length / PAGE))
   const pg = Math.min(page, pages - 1)
 
@@ -630,8 +630,8 @@ export default function Devices() {
 
       {/* Trang vừa 1 màn hình, không cuộn: biểu đồ cao vừa đủ, danh sách thiết bị (2 hàng x 5 cột) giãn lấp phần còn lại;
           cửa sổ quá thấp thì chỉ vùng này cuộn */}
-      <main className="flex w-full min-h-0 flex-1 flex-col overflow-y-auto px-4 sm:px-6 lg:px-8 py-3">
-        <div className="mb-4">
+      <main className="flex w-full min-h-0 flex-1 flex-col overflow-y-auto px-4 sm:px-6 lg:px-8 py-2">
+        <div className="mb-2.5">
 
         {cases?.length === 0 && (
           <div className="card mb-5 flex items-center justify-between gap-3 p-4 text-sm text-muted border-amber-200 bg-amber-50">
@@ -676,8 +676,8 @@ export default function Devices() {
           const perDev = allDevList.filter(d => d.count).map(d => ({ name: d.name, size: d.size ?? 0, n: d.count })).sort((a, b) => b.size - a.size)
           const maxDev = Math.max(1, ...perDev.map(d => d.size))
           const isDark = theme === 'dark'
-          const H = `mb-3 flex items-center justify-between text-sm font-semibold ${isDark ? 'text-white' : 'text-navy'}`
-          const CARD = `flex flex-col rounded-2xl border p-4 shadow-sm backdrop-blur-md ${isDark ? 'border-[#00b8ff]/25 bg-[#061836]/75' : theme === 'light' ? 'border-sky-300/60 bg-white/80' : 'border-line bg-card'}`
+          const H = `mb-2 flex items-center justify-between text-sm font-semibold ${isDark ? 'text-white' : 'text-navy'}`
+          const CARD = `flex flex-col rounded-2xl border p-3 shadow-sm backdrop-blur-md ${isDark ? 'border-[#00b8ff]/25 bg-[#061836]/75' : theme === 'light' ? 'border-sky-300/60 bg-white/80' : 'border-line bg-card'}`
           const barTrack = isDark ? 'bg-slate-800/80' : 'bg-slate-200/80'
           const allDevs = (cases ?? []).reduce((s, c) => s + c.device_count, 0) || allDevList.length
           const allFiles = (cases ?? []).reduce((s, c) => s + c.count, 0) || totalN
@@ -720,24 +720,24 @@ export default function Devices() {
             },
           ]
           return (
-            <section aria-label={L("Thống kê", "Statistics")} className="space-y-3.5">
-              <dl className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+            <section aria-label={L("Thống kê", "Statistics")} className="space-y-2.5">
+              <dl className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
                 {sysKpis.map((item, idx) => (
                   <div
                     key={item.k}
-                    className={`relative overflow-hidden rounded-2xl border px-4 py-3.5 shadow-sm backdrop-blur-md transition-all ${isDark ? 'border-[#00b8ff]/25 bg-[#071a38]/80 hover:border-[#00b8ff]/45' : theme === 'light' ? 'border-sky-300/60 bg-white/85 hover:border-sky-400' : 'border-line bg-card'}`}
+                    className={`relative overflow-hidden rounded-2xl border px-3.5 py-2.5 shadow-sm backdrop-blur-md transition-all ${isDark ? 'border-[#00b8ff]/25 bg-[#071a38]/80 hover:border-[#00b8ff]/45' : theme === 'light' ? 'border-sky-300/60 bg-white/85 hover:border-sky-400' : 'border-line bg-card'}`}
                   >
                     <div className="relative z-10 flex items-center gap-3.5">
                       {idx === 3 ? (
-                        <div className="relative h-12 w-12 shrink-0">
-                          <svg viewBox="0 0 36 36" className="h-12 w-12 -rotate-90" aria-hidden="true">
+                        <div className="relative h-10 w-10 shrink-0">
+                          <svg viewBox="0 0 36 36" className="h-10 w-10 -rotate-90" aria-hidden="true">
                             <circle cx="18" cy="18" r="14" fill="none" strokeWidth="4" stroke={isDark ? 'rgb(255 255 255 / 0.1)' : 'rgb(148 163 184 / 0.25)'} />
                             <circle cx="18" cy="18" r="14" fill="none" strokeWidth="4" strokeLinecap="round" stroke="#14b8a6"
                               pathLength={100} strokeDasharray={`${diskPct} ${100 - diskPct}`} />
                           </svg>
                         </div>
                       ) : (
-                        <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border bg-gradient-to-br ${item.accent}`}>
+                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border bg-gradient-to-br ${item.accent}`}>
                           {item.icon}
                         </div>
                       )}
@@ -755,15 +755,15 @@ export default function Devices() {
                 ))}
               </dl>
 
-              <div className="grid gap-3.5 lg:grid-cols-3">
+              <div className="grid gap-2.5 lg:grid-cols-3">
               <div className={CARD}>
                 <p className={H}>
                   <span className="inline-flex items-center gap-2"><BarChart3 size={16} className="text-[#00b8ff]" />{L('Thiết bị theo trạng thái', 'Devices by Status')}</span>
                   <span className={`text-xs font-normal ${isDark ? 'text-slate-300' : 'text-muted'}`}>{devTotalCount} {L('máy', 'devices')} · {usb.length} {L('đang cắm', 'connected')}</span>
                 </p>
                 <div className="flex flex-1 items-center justify-around gap-4 py-1">
-                  <div className="relative h-36 w-36 shrink-0">
-                    <svg viewBox="0 0 36 36" className="h-36 w-36 -rotate-90 drop-shadow-[0_0_10px_rgba(0,184,255,0.2)]" role="img"
+                  <div className="relative h-28 w-28 shrink-0">
+                    <svg viewBox="0 0 36 36" className="h-28 w-28 -rotate-90 drop-shadow-[0_0_10px_rgba(0,184,255,0.2)]" role="img"
                       aria-label={status.map(s => `${s.label} ${s.n}`).join(', ')}>
                       <circle cx="18" cy="18" r="14" fill="none" strokeWidth="5.5" stroke={isDark ? 'rgb(255 255 255 / 0.08)' : 'rgb(148 163 184 / 0.2)'} />
                       {status.map(s => {
@@ -775,11 +775,11 @@ export default function Devices() {
                       })}
                     </svg>
                     <span className="absolute inset-0 flex flex-col items-center justify-center">
-                      <span className={`font-display text-3xl font-bold tabular-nums ${isDark ? 'text-white' : 'text-navy'}`}>{devTotalCount}</span>
+                      <span className={`font-display text-2xl font-bold tabular-nums ${isDark ? 'text-white' : 'text-navy'}`}>{devTotalCount}</span>
                       <span className={`text-xs ${isDark ? 'text-slate-300' : 'text-muted'}`}>{L("thiết bị", "devices")}</span>
                     </span>
                   </div>
-                  <ul className={`space-y-2.5 text-sm ${isDark ? 'text-slate-300' : 'text-muted'}`}>
+                  <ul className={`space-y-1.5 text-xs ${isDark ? 'text-slate-300' : 'text-muted'}`}>
                     {!status.length && <li>{L('Chưa có thiết bị', 'No devices')}</li>}
                     {status.map(s => (
                       <li key={s.label} className="flex items-center gap-2">
@@ -790,7 +790,7 @@ export default function Devices() {
                     ))}
                   </ul>
                 </div>
-                <div className={`mt-2 flex items-center justify-between rounded-xl border px-3 py-2 text-xs ${
+                <div className={`mt-1.5 flex items-center justify-between rounded-xl border px-3 py-1.5 text-xs ${
                   errCount > 0
                     ? 'border-rose-500/35 bg-rose-500/10 text-rose-400'
                     : busyCount > 0
@@ -857,7 +857,7 @@ export default function Devices() {
         })()}
         </div>
 
-        <div className={`flex flex-1 flex-col rounded-2xl border p-4 shadow-sm backdrop-blur-md ${theme === 'dark' ? 'border-[#00b8ff]/25 bg-[#061836]/55' : theme === 'light' ? 'border-sky-300/50 bg-white/55' : 'border-line bg-card/60'}`}>
+        <div className={`flex flex-1 flex-col rounded-2xl border p-3 shadow-sm backdrop-blur-md ${theme === 'dark' ? 'border-[#00b8ff]/25 bg-[#061836]/55' : theme === 'light' ? 'border-sky-300/50 bg-white/55' : 'border-line bg-card/60'}`}>
         {!cards.length && (
           <div className="card mb-4 p-10 text-center text-muted border-dashed border-2">
             <Smartphone className="mx-auto h-12 w-12 text-muted/40 mb-3" />
@@ -899,7 +899,7 @@ export default function Devices() {
             </button>
           </div>
         )}
-        <div className="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 lg:grid-rows-[repeat(4,1fr)]">
+        <div className="grid flex-1 grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5 lg:grid-rows-[repeat(3,1fr)]">
           {cards.slice(pg * PAGE, (pg + 1) * PAGE).map((c, i) => {
             const st = states[`${caseName}\n${c.name}`]
             const stage: Stage = (st && st.stage !== 'new' ? st.stage : c.dev?.stage) ?? 'new'
@@ -933,12 +933,12 @@ export default function Devices() {
                 role={openable ? 'link' : undefined}
                 onClick={openable ? () => act(c, 'done') : undefined}
                 onKeyDown={openable ? e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); act(c, 'done') } } : undefined}
-                className={`card group relative flex flex-col justify-between gap-2.5 rounded-xl border border-l-4 border-line ${border} bg-card p-3.5 shadow-sm outline-none transition-all duration-150 hover:z-20 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-within:z-20 ${openable ? 'cursor-pointer' : ''}`}
+                className={`card group relative flex flex-col justify-between gap-1.5 rounded-xl border border-l-4 border-line ${border} bg-card p-2.5 shadow-sm outline-none transition-all duration-150 hover:z-20 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-within:z-20 ${openable ? 'cursor-pointer' : ''}`}
               >
                 {c.usb && <span aria-hidden="true" className="usb-ring" />}
                 {/* Thông tin cơ bản: ảnh/icon, tên, cắm cáp + hệ điều hành */}
                 <div className="flex items-center gap-2.5">
-                  <div className="flex h-14 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-slate-50 text-primary">
+                  <div className="flex h-11 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-slate-50 text-primary">
                     <DeviceThumb
                       name={c.dev?.info?.name || c.usb?.name || c.name.split(' · ')[0]}
                       serial={c.serial}
@@ -1190,7 +1190,7 @@ export default function Devices() {
                     <span
                       key={p.key}
                       title={p.label}
-                      className={`inline-flex h-8 items-center justify-center rounded-lg border shadow-xs transition-all duration-150 group-hover:scale-[1.03] ${
+                      className={`inline-flex h-7 items-center justify-center rounded-lg border shadow-xs transition-all duration-150 group-hover:scale-[1.03] ${
                         openable && (c.dev?.count ?? 0) > 0
                           ? 'border-[#00b8ff]/55 bg-[#0077cc]/25 shadow-[0_0_8px_rgba(0,184,255,0.22)] group-hover:border-[#38bdf8]'
                           : 'border-slate-300/80 bg-white/90 opacity-65'
