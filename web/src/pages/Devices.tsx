@@ -1,33 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent, MouseEvent, ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import {
-  FolderPlus,
-  FolderCog,
-  X,
-  ChevronLeft,
-  ChevronRight,
-  ChevronDown,
-  HardDrive,
-  Smartphone,
-  Layers,
-  Files,
-  AlertTriangle,
-  Plus,
-  LogOut,
-  Download,
-  Play,
-  RotateCcw,
-  KeyRound,
-  RefreshCw,
-  ShieldCheck,
-  Shield,
-  ShieldAlert,
-  ShieldOff,
-  History,
-  Pencil,
-  Trash2, Eye,
-} from 'lucide-react'
+import { FolderPlus, FolderCog, X, ChevronLeft, ChevronRight, ChevronDown, HardDrive, Smartphone, Layers, Files, AlertTriangle, Plus, LogOut, Download, Play, RotateCcw, KeyRound, RefreshCw, ShieldCheck, Shield, ShieldAlert, ShieldOff, History, Pencil, Trash2, Eye, FolderOpen, BarChart3, PieChart, ListTree, CheckCircle2 } from 'lucide-react'
 import { logout } from '../auth'
 import { DeviceThumb } from '../components/DeviceThumb'
 import { useI18n } from '../i18n'
@@ -657,23 +631,7 @@ export default function Devices() {
       {/* Trang vừa 1 màn hình, không cuộn: biểu đồ cao vừa đủ, danh sách thiết bị (2 hàng x 5 cột) giãn lấp phần còn lại;
           cửa sổ quá thấp thì chỉ vùng này cuộn */}
       <main className="flex w-full min-h-0 flex-1 flex-col overflow-y-auto px-4 sm:px-6 lg:px-8 py-3">
-        <div className={`mb-4 rounded-2xl border p-4 shadow-sm backdrop-blur-md ${theme === 'dark' ? 'border-[#00b8ff]/25 bg-[#061836]/55' : theme === 'light' ? 'border-sky-300/50 bg-white/55' : 'border-line bg-card/60'}`}>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className={`font-display text-lg font-bold flex items-center gap-2 ${theme === 'dark' ? 'text-white' : 'text-navy'}`}>
-              {L('Thống kê', 'Statistics')}
-            </h2>
-          </div>
-
-          <div className={`flex items-center gap-2 text-xs ${theme === 'dark' ? 'text-slate-300' : 'text-muted'}`}>
-            <span className="inline-flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-emerald-500" /> {L('Đang kết nối cáp USB', 'USB Connected')}
-            </span>
-            <span className="inline-flex items-center gap-1 ml-2">
-              <span className="h-2 w-2 rounded-full bg-slate-400" /> {L('Đã rút cáp / Lưu trữ ngoại tuyến', 'Disconnected / Offline')}
-            </span>
-          </div>
-        </div>
+        <div className="mb-4">
 
         {cases?.length === 0 && (
           <div className="card mb-5 flex items-center justify-between gap-3 p-4 text-sm text-muted border-amber-200 bg-amber-50">
@@ -717,91 +675,177 @@ export default function Devices() {
           const maxType = Math.max(1, ...types.map(t => t.n))
           const perDev = allDevList.filter(d => d.count).map(d => ({ name: d.name, size: d.size ?? 0, n: d.count })).sort((a, b) => b.size - a.size)
           const maxDev = Math.max(1, ...perDev.map(d => d.size))
-          const H = 'mb-2 flex items-baseline justify-between text-sm font-semibold text-navy'
-          const CARD = 'flex flex-col rounded-xl border border-line bg-card p-3 shadow-sm'
+          const isDark = theme === 'dark'
+          const H = `mb-3 flex items-center justify-between text-sm font-semibold ${isDark ? 'text-white' : 'text-navy'}`
+          const CARD = `flex flex-col rounded-2xl border p-4 shadow-sm backdrop-blur-md ${isDark ? 'border-[#00b8ff]/25 bg-[#061836]/75' : theme === 'light' ? 'border-sky-300/60 bg-white/80' : 'border-line bg-card'}`
+          const barTrack = isDark ? 'bg-slate-800/80' : 'bg-slate-200/80'
           const allDevs = (cases ?? []).reduce((s, c) => s + c.device_count, 0) || allDevList.length
           const allFiles = (cases ?? []).reduce((s, c) => s + c.count, 0) || totalN
-          const sysKpis: [string, string, string][] = [
-            [L('Vụ án', 'Cases'), (cases?.length ?? 0).toLocaleString(isVi ? 'vi' : 'en'), `${(cases ?? []).filter(c => c.count).length} ${L('vụ có dữ liệu', 'cases with data')}`],
-            [L('Thiết bị', 'Devices'), allDevs.toLocaleString(isVi ? 'vi' : 'en'), L('trên mọi vụ án', 'across all cases')],
-            [L('Tổng tệp', 'Total Files'), allFiles.toLocaleString(isVi ? 'vi' : 'en'), L('đã trích xuất', 'extracted')],
-            [L('Ổ lưu trữ', 'Storage'), sys ? `${Math.round((100 * sys.disk.used) / sys.disk.total)}%` : '–',
-              sys ? `${fmtSize(sys.disk.used)} / ${fmtSize(sys.disk.total)}` : L('đang đọc…', 'reading…')],
+          const diskPct = sys ? Math.round((100 * sys.disk.used) / sys.disk.total) : 0
+          const doneCount = devStates.filter(x => !x.st?.error && x.stage === 'done').length
+          const busyCount = devStates.filter(x => !x.st?.error && (x.stage === 'imaging' || x.stage === 'extracting')).length
+          const errCount = devStates.filter(x => x.st?.error || x.stage === 'error').length
+          const sysKpis = [
+            {
+              k: L('Vụ án', 'Cases'),
+              v: (cases?.length ?? 0).toLocaleString(isVi ? 'vi' : 'en'),
+              sub: `${(cases ?? []).filter(c => c.count).length} ${L('vụ có dữ liệu', 'cases with data')}`,
+              icon: <FolderOpen size={20} className="text-[#00b8ff]" />,
+              accent: 'from-[#00b8ff]/20 to-[#0284c7]/5 border-[#00b8ff]/35',
+              wave: '#00b8ff',
+            },
+            {
+              k: L('Thiết bị', 'Devices'),
+              v: allDevs.toLocaleString(isVi ? 'vi' : 'en'),
+              sub: L('trên mọi vụ án', 'across all cases'),
+              icon: <Smartphone size={20} className="text-[#38bdf8]" />,
+              accent: 'from-[#38bdf8]/20 to-[#2563eb]/5 border-[#38bdf8]/35',
+              wave: '#38bdf8',
+            },
+            {
+              k: L('Tổng tệp', 'Total Files'),
+              v: allFiles.toLocaleString(isVi ? 'vi' : 'en'),
+              sub: L('đã trích xuất', 'extracted'),
+              icon: <Files size={20} className="text-[#a855f7]" />,
+              accent: 'from-[#a855f7]/20 to-[#6366f1]/5 border-[#a855f7]/35',
+              wave: '#a855f7',
+            },
+            {
+              k: L('Ổ lưu trữ', 'Storage'),
+              v: sys ? `${diskPct}%` : '–',
+              sub: sys ? `${fmtSize(sys.disk.used)} / ${fmtSize(sys.disk.total)}` : L('đang đọc…', 'reading…'),
+              icon: null,
+              accent: 'from-[#14b8a6]/20 to-[#00b8ff]/5 border-[#14b8a6]/35',
+              wave: '#14b8a6',
+            },
           ]
           return (
-            <section aria-label={L("Thống kê", "Statistics")} className="space-y-3">
-              <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                {sysKpis.map(([k, v, sub]) => (
-                  <div key={k} className="rounded-xl border border-line bg-card px-5 py-3 shadow-sm">
-                    <dt className="text-sm font-medium text-muted">{k}</dt>
-                    <dd className="font-display text-3xl font-bold tabular-nums text-navy">{v}</dd>
-                    <dd className="mt-0.5 text-xs text-muted">{sub}</dd>
+            <section aria-label={L("Thống kê", "Statistics")} className="space-y-3.5">
+              <dl className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+                {sysKpis.map((item, idx) => (
+                  <div
+                    key={item.k}
+                    className={`relative overflow-hidden rounded-2xl border px-4 py-3.5 shadow-sm backdrop-blur-md transition-all ${isDark ? 'border-[#00b8ff]/25 bg-[#071a38]/80 hover:border-[#00b8ff]/45' : theme === 'light' ? 'border-sky-300/60 bg-white/85 hover:border-sky-400' : 'border-line bg-card'}`}
+                  >
+                    <div className="relative z-10 flex items-center gap-3.5">
+                      {idx === 3 ? (
+                        <div className="relative h-12 w-12 shrink-0">
+                          <svg viewBox="0 0 36 36" className="h-12 w-12 -rotate-90" aria-hidden="true">
+                            <circle cx="18" cy="18" r="14" fill="none" strokeWidth="4" stroke={isDark ? 'rgb(255 255 255 / 0.1)' : 'rgb(148 163 184 / 0.25)'} />
+                            <circle cx="18" cy="18" r="14" fill="none" strokeWidth="4" strokeLinecap="round" stroke="#14b8a6"
+                              pathLength={100} strokeDasharray={`${diskPct} ${100 - diskPct}`} />
+                          </svg>
+                        </div>
+                      ) : (
+                        <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border bg-gradient-to-br ${item.accent}`}>
+                          {item.icon}
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <dt className={`text-xs font-medium ${isDark ? 'text-slate-300' : 'text-muted'}`}>{item.k}</dt>
+                        <dd className={`font-display text-2xl sm:text-3xl font-bold tabular-nums leading-tight ${isDark ? 'text-white' : 'text-navy'}`}>{item.v}</dd>
+                        <dd className={`mt-0.5 truncate text-[11px] ${isDark ? 'text-slate-400' : 'text-muted'}`}>{item.sub}</dd>
+                      </div>
+                    </div>
+                    <svg viewBox="0 0 120 36" preserveAspectRatio="none" aria-hidden="true" className="pointer-events-none absolute bottom-0 right-0 h-10 w-28 opacity-25">
+                      <path d="M0 32 Q 25 28, 45 20 T 85 14 T 120 4 L 120 36 L 0 36 Z" fill={item.wave} fillOpacity="0.25" />
+                      <path d="M0 32 Q 25 28, 45 20 T 85 14 T 120 4" fill="none" stroke={item.wave} strokeWidth="1.5" />
+                    </svg>
                   </div>
                 ))}
               </dl>
-              <div className="grid gap-3 lg:grid-cols-3">
+
+              <div className="grid gap-3.5 lg:grid-cols-3">
               <div className={CARD}>
-                <p className={H}><span>{L('Thiết bị theo trạng thái', 'Devices by Status')}</span><span className="text-xs text-muted">{devTotalCount} {L('máy', 'devices')} · {usb.length} {L('đang cắm', 'connected')}</span></p>
-                <div className="flex flex-1 items-center justify-around gap-4">
+                <p className={H}>
+                  <span className="inline-flex items-center gap-2"><BarChart3 size={16} className="text-[#00b8ff]" />{L('Thiết bị theo trạng thái', 'Devices by Status')}</span>
+                  <span className={`text-xs font-normal ${isDark ? 'text-slate-300' : 'text-muted'}`}>{devTotalCount} {L('máy', 'devices')} · {usb.length} {L('đang cắm', 'connected')}</span>
+                </p>
+                <div className="flex flex-1 items-center justify-around gap-4 py-1">
                   <div className="relative h-36 w-36 shrink-0">
-                    <svg viewBox="0 0 36 36" className="h-36 w-36 -rotate-90" role="img"
+                    <svg viewBox="0 0 36 36" className="h-36 w-36 -rotate-90 drop-shadow-[0_0_10px_rgba(0,184,255,0.2)]" role="img"
                       aria-label={status.map(s => `${s.label} ${s.n}`).join(', ')}>
-                      <circle cx="18" cy="18" r="14" fill="none" strokeWidth="6" stroke="rgb(255 255 255 / 0.08)" />
+                      <circle cx="18" cy="18" r="14" fill="none" strokeWidth="5.5" stroke={isDark ? 'rgb(255 255 255 / 0.08)' : 'rgb(148 163 184 / 0.2)'} />
                       {status.map(s => {
                         const len = (100 * s.n) / Math.max(1, devStates.length)
-                        const el = <circle key={s.label} cx="18" cy="18" r="14" fill="none" strokeWidth="6" stroke={s.color}
+                        const el = <circle key={s.label} cx="18" cy="18" r="14" fill="none" strokeWidth="5.5" stroke={s.color}
                           pathLength={100} strokeDasharray={`${len} ${100 - len}`} strokeDashoffset={-acc}><title>{`${s.label}: ${s.n}`}</title></circle>
                         acc += len
                         return el
                       })}
                     </svg>
                     <span className="absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="font-display text-3xl font-bold text-navy tabular-nums">{devTotalCount}</span>
-                      <span className="text-xs text-muted">{L("thiết bị", "devices")}</span>
+                      <span className={`font-display text-3xl font-bold tabular-nums ${isDark ? 'text-white' : 'text-navy'}`}>{devTotalCount}</span>
+                      <span className={`text-xs ${isDark ? 'text-slate-300' : 'text-muted'}`}>{L("thiết bị", "devices")}</span>
                     </span>
                   </div>
-                  <ul className="space-y-2 text-sm text-muted">
+                  <ul className={`space-y-2.5 text-sm ${isDark ? 'text-slate-300' : 'text-muted'}`}>
                     {!status.length && <li>{L('Chưa có thiết bị', 'No devices')}</li>}
                     {status.map(s => (
-                      <li key={s.label} className="flex items-center gap-1.5">
-                        <span className="h-3 w-3 rounded-sm" style={{ background: s.color }} aria-hidden="true" />
-                        {s.label} <span className="font-semibold tabular-nums text-ink">{s.n}</span>
+                      <li key={s.label} className="flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: s.color }} aria-hidden="true" />
+                        <span>{s.label}</span>
+                        <span className={`ml-1 font-bold tabular-nums ${isDark ? 'text-white' : 'text-ink'}`}>{s.n}</span>
                       </li>
                     ))}
                   </ul>
                 </div>
+                <div className={`mt-2 flex items-center justify-between rounded-xl border px-3 py-2 text-xs ${
+                  errCount > 0
+                    ? 'border-rose-500/35 bg-rose-500/10 text-rose-400'
+                    : busyCount > 0
+                    ? 'border-[#00b8ff]/35 bg-[#00b8ff]/10 text-[#00b8ff]'
+                    : 'border-[#00b8ff]/35 bg-[#00b8ff]/10 text-[#00b8ff]'
+                }`}>
+                  <span className="font-medium">
+                    {errCount > 0
+                      ? `${errCount} ${L('thiết bị gặp lỗi', 'device error(s)')}`
+                      : busyCount > 0
+                      ? `${busyCount} ${L('thiết bị đang xử lý…', 'device(s) processing…')}`
+                      : `${L('Đã trích xuất', 'Extracted')}: ${doneCount}/${devStates.length} ${L('thiết bị', 'devices')}`}
+                  </span>
+                  <CheckCircle2 size={15} className="shrink-0" aria-hidden="true" />
+                </div>
               </div>
 
               <div className={CARD}>
-                <p className={H}><span>{L('Tệp theo loại', 'Files by Type')}</span><span className="text-xs text-muted">{totalN.toLocaleString(isVi ? 'vi' : 'en')} {L('tệp', 'files')}</span></p>
-                <ul className="flex flex-1 flex-col justify-between gap-1">
+                <p className={H}>
+                  <span className="inline-flex items-center gap-2"><ListTree size={16} className="text-[#00b8ff]" />{L('Tệp theo loại', 'Files by Type')}</span>
+                  <span className={`text-xs font-normal ${isDark ? 'text-slate-300' : 'text-muted'}`}>{totalN.toLocaleString(isVi ? 'vi' : 'en')} {L('tệp', 'files')}</span>
+                </p>
+                <ul className="flex flex-1 flex-col justify-between gap-1.5">
                   {!types.length && <li className="m-auto text-xs text-muted">{L('Chưa có tệp trích xuất', 'No extracted files yet')}</li>}
                   {types.map(t => (
-                    <li key={t.key} className="grid grid-cols-[7.5rem_1fr_4rem] items-center gap-2 text-xs"
+                    <li key={t.key} className="grid grid-cols-[7.5rem_1fr_4.2rem] items-center gap-2 text-xs"
                       title={`${t.label}: ${t.n.toLocaleString('vi')} tệp · ${fmtSize(t.size)}`}>
-                      <span className="truncate text-muted">{isVi ? t.label : t.en}</span>
-                      <span className="h-3.5 rounded-full bg-slate-100">
-                        <span className="block h-full rounded-full" style={{ width: `${Math.max(1, (100 * t.n) / maxType)}%`, background: t.color }} />
+                      <span className={`flex items-center gap-1.5 truncate ${isDark ? 'text-slate-200' : 'text-muted'}`}>
+                        <span className="h-2 w-2 rounded-full shrink-0" style={{ background: t.color }} aria-hidden="true" />
+                        <span className="truncate">{isVi ? t.label : t.en}</span>
                       </span>
-                      <span className="text-right font-semibold tabular-nums text-ink">{t.n.toLocaleString('vi')}</span>
+                      <span className={`h-2.5 overflow-hidden rounded-full ${barTrack}`}>
+                        <span className="block h-full rounded-full transition-all duration-300" style={{ width: `${Math.max(2, (100 * t.n) / maxType)}%`, background: t.color }} />
+                      </span>
+                      <span className={`text-right font-semibold tabular-nums ${isDark ? 'text-white' : 'text-ink'}`}>{t.n.toLocaleString('vi')}</span>
                     </li>
                   ))}
                 </ul>
               </div>
 
               <div className={CARD}>
-                <p className={H}><span>{L('Dung lượng theo thiết bị', 'Storage by Device')}</span><span className="text-xs text-muted">{fmtSize(totalSize)}</span></p>
-                {/* 1 dòng/máy (tên | cột | dung lượng) như "Tệp theo loại": khối biểu đồ đủ thấp để trang không cuộn */}
-                <ul className="flex flex-1 flex-col justify-around gap-1">
+                <p className={H}>
+                  <span className="inline-flex items-center gap-2"><PieChart size={16} className="text-[#00b8ff]" />{L('Dung lượng theo thiết bị', 'Storage by Device')}</span>
+                  <span className={`text-xs font-normal ${isDark ? 'text-slate-300' : 'text-muted'}`}>{fmtSize(totalSize)}</span>
+                </p>
+                <ul className="flex flex-1 flex-col justify-around gap-1.5">
                   {!perDev.length && <li className="m-auto text-xs text-muted">{L('Chưa có dữ liệu thiết bị', 'No device data yet')}</li>}
                   {perDev.slice(0, 8).map(d => (
-                    <li key={d.name} className="grid grid-cols-[7.5rem_1fr_4rem] items-center gap-2 text-xs"
+                    <li key={d.name} className="grid grid-cols-[8rem_1fr_4.5rem] items-center gap-2 text-xs"
                       title={`${d.name}: ${fmtSize(d.size)} · ${d.n.toLocaleString('vi')} tệp`}>
-                      <span className="truncate text-muted">{d.name}</span>
-                      <span className="h-3.5 rounded-full bg-slate-100">
-                        <span className="block h-full rounded-full bg-primary" style={{ width: `${Math.max(1, (100 * d.size) / maxDev)}%` }} />
+                      <span className={`truncate ${isDark ? 'text-slate-200' : 'text-muted'}`}>{d.name}</span>
+                      <span className={`h-2.5 overflow-hidden rounded-full ${barTrack}`}>
+                        <span className="block h-full rounded-full bg-gradient-to-r from-[#0284c7] to-[#00d4ff] transition-all duration-300" style={{ width: `${Math.max(2, (100 * d.size) / maxDev)}%` }} />
                       </span>
-                      <span className="text-right font-semibold tabular-nums text-ink">{fmtSize(d.size)}</span>
+                      <span className={`text-right font-semibold tabular-nums ${isDark ? 'text-white' : 'text-ink'}`}>{fmtSize(d.size)}</span>
                     </li>
                   ))}
                   {perDev.length > 8 && <li className="text-[10px] text-muted">và {perDev.length - 8} thiết bị khác</li>}
@@ -828,8 +872,10 @@ export default function Devices() {
         {cards.length > 0 && (
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2.5">
-              <h3 className={`flex items-baseline gap-2 font-display text-sm font-semibold ${theme === 'dark' ? 'text-white' : 'text-navy'}`}>
-                {L('Danh sách thiết bị của vụ án', 'Case Devices')} <span className="text-[#00b8ff]">{caseName}</span>
+              <h3 className={`flex items-center gap-2 font-display text-sm font-semibold ${theme === 'dark' ? 'text-white' : 'text-navy'}`}>
+                <FolderOpen size={15} className="text-[#00b8ff]" aria-hidden="true" />
+                <span>{L('Danh sách thiết bị của vụ án', 'Case Devices')}</span>
+                <span className="text-[#00b8ff]">{caseName}</span>
                 <span className={`text-xs font-normal ${theme === 'dark' ? 'text-slate-300' : 'text-muted'}`}>({cards.length})</span>
               </h3>
               <span
@@ -887,7 +933,7 @@ export default function Devices() {
                 role={openable ? 'link' : undefined}
                 onClick={openable ? () => act(c, 'done') : undefined}
                 onKeyDown={openable ? e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); act(c, 'done') } } : undefined}
-                className={`card group relative flex flex-col justify-center gap-2.5 rounded-xl border border-l-4 border-line ${border} bg-card p-4 shadow-sm outline-none transition-all duration-150 hover:z-20 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-within:z-20 ${openable ? 'cursor-pointer' : ''}`}
+                className={`card group relative flex flex-col justify-between gap-2.5 rounded-xl border border-l-4 border-line ${border} bg-card p-3.5 shadow-sm outline-none transition-all duration-150 hover:z-20 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-within:z-20 ${openable ? 'cursor-pointer' : ''}`}
               >
                 {c.usb && <span aria-hidden="true" className="usb-ring" />}
                 {/* Thông tin cơ bản: ảnh/icon, tên, cắm cáp + hệ điều hành */}
@@ -1013,6 +1059,146 @@ export default function Devices() {
                     </IconBtn>
                   )}
                   {openable && <ChevronRight className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />}
+                </div>
+
+                <div className="grid grid-cols-5 gap-1.5 border-t border-line/60 pt-2">
+                  {[
+                    {
+                      key: 'zalo',
+                      label: 'Zalo',
+                      icon: (
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                          <rect width="24" height="24" rx="6" fill="#0068FF" />
+                          <path d="M12 4.5c-4.42 0-8 3.1-8 6.92 0 2.13 1.12 4.04 2.88 5.31-.12.92-.52 2.02-1.15 2.77 1.35-.14 2.75-.64 3.68-1.26.82.22 1.69.34 2.59.34 4.42 0 8-3.1 8-6.92S16.42 4.5 12 4.5z" fill="#fff" />
+                          <path d="M7.6 10.1h3.2l-3.1 3.5h3.2" fill="none" stroke="#0068FF" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" />
+                          <circle cx="13.1" cy="12.3" r="1.25" fill="none" stroke="#0068FF" strokeWidth="1.2" />
+                          <path d="M16.2 9.8v3.7" stroke="#0068FF" strokeWidth="1.25" strokeLinecap="round" />
+                        </svg>
+                      ),
+                    },
+                    {
+                      key: 'messenger',
+                      label: 'Messenger',
+                      icon: (
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                          <defs>
+                            <linearGradient id={`msgG-${i}`} x1="0%" y1="100%" x2="100%" y2="0%">
+                              <stop offset="0%" stopColor="#0099FF" />
+                              <stop offset="55%" stopColor="#A033FF" />
+                              <stop offset="100%" stopColor="#FF5280" />
+                            </linearGradient>
+                          </defs>
+                          <rect width="24" height="24" rx="6" fill="#0d1b36" />
+                          <path d="M12 4C7.3 4 3.5 7.45 3.5 11.7c0 2.42 1.24 4.58 3.18 5.99V20.5l2.84-1.56c.79.22 1.62.34 2.48.34 4.7 0 8.5-3.45 8.5-7.58C20.5 7.45 16.7 4 12 4z" fill="{`url(#msgG-${i})`}" />
+                          <path d="M12.85 13.75 10.68 11.44 6.5 13.75l4.6-4.88 2.22 2.31 4.13-2.31-4.6 4.88z" fill="#fff" />
+                        </svg>
+                      ),
+                    },
+                    {
+                      key: 'facebook',
+                      label: 'Facebook',
+                      icon: (
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                          <rect width="24" height="24" rx="6" fill="#1877F2" />
+                          <path d="M15.7 13.3l.55-3.55h-3.4V7.45c0-.97.48-1.92 2-1.92h1.55V2.5s-1.4-.24-2.75-.24c-2.8 0-4.63 1.7-4.63 4.77v2.72H5.9v3.55h3.12V22h3.83v-8.7h2.85z" fill="#fff" />
+                        </svg>
+                      ),
+                    },
+                    {
+                      key: 'telegram',
+                      label: 'Telegram',
+                      icon: (
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                          <rect width="24" height="24" rx="6" fill="#26A5E4" />
+                          <path d="M18.9 6.2 4.8 11.65c-.96.38-.95.92-.18 1.16l3.62 1.13 8.38-5.28c.4-.24.76-.11.46.16l-6.79 6.13-.26 3.74c.38 0 .55-.17.76-.38l1.82-1.77 3.78 2.79c.7.39 1.2.19 1.37-.64l2.48-11.68c.25-1.02-.39-1.48-1.34-1.01z" fill="#fff" />
+                        </svg>
+                      ),
+                    },
+                    {
+                      key: 'sms',
+                      label: L('Tin nhắn', 'Messages'),
+                      icon: (
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                          <rect width="24" height="24" rx="6" fill="#22C55E" />
+                          <path d="M12 5.2c-4.14 0-7.5 2.78-7.5 6.2 0 1.88 1.02 3.56 2.63 4.7l-.72 2.7 2.96-1.47c.82.22 1.7.34 2.63.34 4.14 0 7.5-2.78 7.5-6.2s-3.36-6.27-7.5-6.27z" fill="#fff" />
+                          <circle cx="9.2" cy="11.4" r="1" fill="#22C55E" />
+                          <circle cx="12" cy="11.4" r="1" fill="#22C55E" />
+                          <circle cx="14.8" cy="11.4" r="1" fill="#22C55E" />
+                        </svg>
+                      ),
+                    },
+                    {
+                      key: 'photo',
+                      label: L('Ảnh', 'Photos'),
+                      icon: (
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                          <rect width="24" height="24" rx="6" fill="#0EA5E9" />
+                          <circle cx="8.5" cy="8.5" r="2" fill="#FDE047" />
+                          <path d="M4.5 18.5 9.8 12.2l3.4 3.9 2.5-2.8 3.8 5.2H4.5z" fill="#fff" />
+                        </svg>
+                      ),
+                    },
+                    {
+                      key: 'video',
+                      label: 'Video',
+                      icon: (
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                          <rect width="24" height="24" rx="6" fill="#EF4444" />
+                          <path d="M9.5 7.5v9l7.5-4.5-7.5-4.5z" fill="#fff" />
+                        </svg>
+                      ),
+                    },
+                    {
+                      key: 'audio',
+                      label: L('Âm thanh', 'Audio'),
+                      icon: (
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                          <defs>
+                            <linearGradient id={`audG-${i}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                              <stop offset="0%" stopColor="#EC4899" />
+                              <stop offset="100%" stopColor="#8B5CF6" />
+                            </linearGradient>
+                          </defs>
+                          <rect width="24" height="24" rx="6" fill="{`url(#audG-${i})`}" />
+                          <path d="M15.8 6v8.2a2.6 2.6 0 1 1-1.6-2.4V8.5l-4.6 1.1v5.8a2.6 2.6 0 1 1-1.6-2.4V8.1l7.8-2.1z" fill="#fff" />
+                        </svg>
+                      ),
+                    },
+                    {
+                      key: 'call',
+                      label: L('Cuộc gọi & Danh bạ', 'Calls & Contacts'),
+                      icon: (
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                          <rect width="24" height="24" rx="6" fill="#16A34A" />
+                          <path d="M17.2 14.7c-.85 0-1.68-.14-2.45-.4a.82.82 0 0 0-.82.2l-1.52 1.52a11.7 11.7 0 0 1-5.13-5.13l1.52-1.52c.24-.23.31-.56.2-.86-.26-.77-.4-1.6-.4-2.45a.83.83 0 0 0-.83-.83H5.5a.83.83 0 0 0-.83.83C4.67 13.7 10.3 19.33 17.2 19.33a.83.83 0 0 0 .83-.83v-2.97a.83.83 0 0 0-.83-.83z" fill="#fff" />
+                        </svg>
+                      ),
+                    },
+                    {
+                      key: 'doc',
+                      label: L('Tài liệu', 'Documents'),
+                      icon: (
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                          <rect width="24" height="24" rx="6" fill="#6366F1" />
+                          <path d="M7.5 5h6.2L17 8.3V19H7.5V5z" fill="#fff" />
+                          <path d="M13.5 5v3.5H17" fill="#C7D2FE" />
+                          <path d="M9.5 11.5h5M9.5 14h5M9.5 16.5h3.2" stroke="#6366F1" strokeWidth="1.2" strokeLinecap="round" />
+                        </svg>
+                      ),
+                    },
+                  ].map(p => (
+                    <span
+                      key={p.key}
+                      title={p.label}
+                      className={`inline-flex h-8 items-center justify-center rounded-lg border shadow-xs transition-all duration-150 group-hover:scale-[1.03] ${
+                        openable && (c.dev?.count ?? 0) > 0
+                          ? 'border-[#00b8ff]/55 bg-[#0077cc]/25 shadow-[0_0_8px_rgba(0,184,255,0.22)] group-hover:border-[#38bdf8]'
+                          : 'border-slate-300/80 bg-white/90 opacity-65'
+                      }`}
+                    >
+                      {p.icon}
+                    </span>
+                  ))}
                 </div>
 
                 {/* Chi tiết: hiện khi di chuột hoặc focus (bàn phím/chạm) vào thẻ; nằm trong thẻ nên rê chuột lên vẫn giữ.
