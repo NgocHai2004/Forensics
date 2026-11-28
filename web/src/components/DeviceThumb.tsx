@@ -19,7 +19,7 @@ export function DeviceThumb({ name, serial, ios, type, className = 'h-8 w-8' }: 
   }
   return (
     <img
-      src={`/api/device-image?v=3&serial=${encodeURIComponent(serial ?? '')}&ios=${!!ios}&name=${encodeURIComponent(name)}`}
+      src={`/api/device-image?v=4&serial=${encodeURIComponent(serial ?? '')}&ios=${!!ios}&name=${encodeURIComponent(name)}`}
       onError={() => setErr(true)}
       className="h-full w-full object-contain"
       alt={name}

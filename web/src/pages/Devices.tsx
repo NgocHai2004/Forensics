@@ -3,6 +3,7 @@ import type { FormEvent, MouseEvent, ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   FolderPlus,
+  FolderCog,
   X,
   ChevronLeft,
   ChevronRight,
@@ -25,14 +26,14 @@ import {
   ShieldOff,
   History,
   Pencil,
-  Trash2,
-  CheckCircle2
+  Trash2, Eye,
 } from 'lucide-react'
 import { logout } from '../auth'
 import { DeviceThumb } from '../components/DeviceThumb'
 import { useI18n } from '../i18n'
+import { NotificationBell, useNotify } from '../notify'
 import { api, ApiError, fmtSize } from '../api'
-import type { AuditEntry, Case, Device, FileItem, DeviceAcqState, DeviceInfo, SystemStats, SyncItem } from '../api'
+import type { AuditEntry, Case, Device, FileItem, Kind, DeviceAcqState, DeviceInfo, SystemStats, SyncItem } from '../api'
 
 type Usb = Awaited<ReturnType<typeof api.usb>>['items'][number]
 type Stage = DeviceAcqState['stage']
@@ -133,6 +134,42 @@ export default function Devices() {
   useEffect(() => setPage(0), [caseName])
   // thống kê loại tệp của cả vụ án (server đếm trên toàn bộ tệp); 30 s cập nhật một lần
   const [fstat, setFstat] = useState<{ by: Record<string, { n: number; size: number }>; n: number; size: number } | null>(null)
+  const [globalFstat, setGlobalFstat] = useState<{ by: Record<string, { n: number; size: number }>; n: number; size: number } | null>(null)
+  const [globalDevs, setGlobalDevs] = useState<(Device & { _case: string })[]>([])
+
+  useEffect(() => {
+    const active = (cases ?? []).filter(c => c.count > 0 || c.device_count > 0)
+    if (!active.length) { setGlobalFstat(null); setGlobalDevs([]); return }
+    let alive = true
+    Promise.all(
+      active.map(c =>
+        Promise.all([
+          api.fileStats(c.name).catch(() => null),
+          api.devices(c.name).then(r => r.items.map(d => ({ ...d, _case: c.name }))).catch(() => []),
+        ])
+      )
+    ).then(rows => {
+      if (!alive) return
+      const by: Record<string, { n: number; size: number }> = {}
+      let n = 0, size = 0
+      const devsAll: (Device & { _case: string })[] = []
+      for (const [fs, ds] of rows) {
+        if (fs) {
+          n += fs.n || 0
+          size += fs.size || 0
+          for (const [k, v] of Object.entries(fs.by || {})) {
+            if (!by[k]) by[k] = { n: 0, size: 0 }
+            by[k].n += v.n || 0
+            by[k].size += v.size || 0
+          }
+        }
+        devsAll.push(...ds)
+      }
+      setGlobalFstat({ by, n, size })
+      setGlobalDevs(devsAll)
+    })
+    return () => { alive = false }
+  }, [cases, devs])
   const [sys, setSys] = useState<SystemStats | null>(null)
   useEffect(() => {
     if (!caseName) return setFstat(null)
@@ -164,11 +201,54 @@ export default function Devices() {
     localStorage.setItem(CASE_KEY, name)
   }
 
+  const [mgrEditCase, setMgrEditCase] = useState<string | null>(null)
+  const [mgrEditVal, setMgrEditVal] = useState('')
+  const [mgrDelCase, setMgrDelCase] = useState<string | null>(null)
+  const [mgrBusy, setMgrBusy] = useState(false)
+
   const openCreate = () => {
     setNewName('')
     setCreateErr('')
+    setMgrEditCase(null)
+    setMgrDelCase(null)
+    api.cases().then(setCases).catch(() => {})
     dlg.current?.showModal()
     nameRef.current?.focus()
+  }
+
+  const doRenameCase = async (oldName: string) => {
+    const nxt = mgrEditVal.trim()
+    if (!nxt || nxt === oldName) { setMgrEditCase(null); return }
+    setMgrBusy(true)
+    setCreateErr('')
+    try {
+      const updated = await api.updateCase(oldName, nxt, cases?.find(x => x.name === oldName)?.note ?? '')
+      setCases(cs => (cs ?? []).map(x => (x.name === oldName ? { ...x, name: updated.name } : x)))
+      if (caseName === oldName) pickCase(updated.name)
+      setMgrEditCase(null)
+      notify(L(`Đã đổi tên vụ án "${oldName}" thành "${updated.name}"`, `Renamed case "${oldName}" to "${updated.name}"`))
+    } catch (e) {
+      setCreateErr(e instanceof ApiError ? e.message : L('Không đổi tên được vụ án', 'Cannot rename case'))
+    } finally {
+      setMgrBusy(false)
+    }
+  }
+
+  const doDeleteCase = async (target: string) => {
+    setMgrBusy(true)
+    setCreateErr('')
+    try {
+      await api.deleteCase(target)
+      const rest = (cases ?? []).filter(x => x.name !== target)
+      setCases(rest)
+      if (caseName === target) pickCase(rest[0]?.name ?? '')
+      setMgrDelCase(null)
+      notify(L(`Đã xoá vụ án "${target}"`, `Deleted case "${target}"`))
+    } catch (e) {
+      setCreateErr(e instanceof ApiError ? e.message : L('Không xoá được vụ án', 'Cannot delete case'))
+    } finally {
+      setMgrBusy(false)
+    }
   }
 
   const closeOnBackdrop = (e: MouseEvent<HTMLDialogElement>) => {
@@ -196,11 +276,8 @@ export default function Devices() {
   const [deletingDev, setDeletingDev] = useState<string | null>(null)
   const [delErr, setDelErr] = useState('')
   const [delBusy, setDelBusy] = useState(false)
-  const [toast, setToast] = useState<string | null>(null)
-  const showToast = (msg: string) => {
-    setToast(msg)
-    setTimeout(() => setToast(cur => (cur === msg ? null : cur)), 3500)
-  }
+  const { notify } = useNotify()
+  const showToast = notify
 
   const openRename = (devName: string, e: MouseEvent) => {
     e.stopPropagation()
@@ -253,14 +330,43 @@ export default function Devices() {
 
   const [syncExpand, setSyncExpand] = useState<string | null>(null)
   const [syncFiles, setSyncFiles] = useState<Record<string, FileItem[]>>({})
+  const [syncFilesTotal, setSyncFilesTotal] = useState<Record<string, number>>({})
+  const [syncFilesPage, setSyncFilesPage] = useState<Record<string, number>>({})
+  const [syncFilesQ, setSyncFilesQ] = useState<Record<string, string>>({})
+  const [syncFilesKind, setSyncFilesKind] = useState<Record<string, Kind | ''>>({})
+  const [syncFilesStats, setSyncFilesStats] = useState<Record<string, Record<string, { n: number; size: number }>>>({})
   const [syncFilesBusy, setSyncFilesBusy] = useState<string | null>(null)
   const [syncFileSel, setSyncFileSel] = useState<Record<string, Set<number>>>({})
+  const previewDlg = useRef<HTMLDialogElement>(null)
+  const [previewFile, setPreviewFile] = useState<(FileItem & { _dev?: string }) | null>(null)
+  const [previewBusy, setPreviewBusy] = useState(false)
+
+  const openSyncPreview = async (devName: string, f: FileItem) => {
+    setPreviewFile({ ...f, _dev: devName })
+    previewDlg.current?.showModal()
+    if (!f.text_content && f.kind !== 'image' && f.kind !== 'video' && f.kind !== 'audio') {
+      setPreviewBusy(true)
+      try {
+        const full = await api.file(f.id)
+        setPreviewFile({ ...full, _dev: devName })
+      } catch {
+        // giữ dữ liệu hiện có nếu lỗi
+      } finally {
+        setPreviewBusy(false)
+      }
+    }
+  }
 
   const openSync = () => {
     setSyncSel(new Set())
     setSyncMsg('')
     setSyncExpand(null)
     setSyncFiles({})
+    setSyncFilesTotal({})
+    setSyncFilesPage({})
+    setSyncFilesQ({})
+    setSyncFilesKind({})
+    setSyncFilesStats({})
     setSyncFileSel({})
     api.syncs(caseName).then(r => setSyncs(byDevice(r.items))).catch(() => setSyncs({}))
     syncDlg.current?.showModal()
@@ -272,20 +378,28 @@ export default function Devices() {
     return n
   })
 
+  const loadSyncFiles = async (name: string, page = 1, q = syncFilesQ[name] ?? '', kind: Kind | '' = syncFilesKind[name] ?? '', append = false) => {
+    setSyncFilesBusy(name)
+    try {
+      const res = await api.files({ collection: caseName, device: name, page, limit: 200, q: q.trim() || undefined, kind: kind || undefined })
+      setSyncFiles(m => ({ ...m, [name]: append ? [...(m[name] ?? []), ...res.items] : res.items }))
+      setSyncFilesTotal(m => ({ ...m, [name]: res.total }))
+      setSyncFilesPage(m => ({ ...m, [name]: page }))
+    } catch {
+      if (!append) setSyncFiles(m => ({ ...m, [name]: [] }))
+    } finally {
+      setSyncFilesBusy(null)
+    }
+  }
+
   const toggleExpandSync = async (name: string) => {
     if (syncExpand === name) { setSyncExpand(null); return }
     setSyncExpand(name)
+    if (!syncFilesStats[name]) {
+      api.fileStats(caseName, name).then(st => setSyncFilesStats(m => ({ ...m, [name]: st.by ?? {} }))).catch(() => {})
+    }
     if (!syncFiles[name]) {
-      setSyncFilesBusy(name)
-      try {
-        const res = await api.files({ collection: caseName, device: name, limit: 100 })
-        setSyncFiles(m => ({ ...m, [name]: res.items }))
-        setSyncFileSel(m => ({ ...m, [name]: new Set(res.items.map(f => f.id)) }))
-      } catch {
-        setSyncFiles(m => ({ ...m, [name]: [] }))
-      } finally {
-        setSyncFilesBusy(null)
-      }
+      await loadSyncFiles(name, 1, syncFilesQ[name] ?? '', syncFilesKind[name] ?? '', false)
     }
   }
 
@@ -310,7 +424,7 @@ export default function Devices() {
     try {
       const filesMap: Record<string, number[]> = {}
       for (const dev of syncSel) {
-        if (syncFileSel[dev]) filesMap[dev] = [...syncFileSel[dev]]
+        if (syncFileSel[dev]?.size) filesMap[dev] = [...syncFileSel[dev]]
       }
       const r = await api.syncQueue(caseName, [...syncSel], Object.keys(filesMap).length ? filesMap : undefined)
       setSyncs(m => ({ ...m, ...byDevice(r.items) }))
@@ -335,6 +449,7 @@ export default function Devices() {
       setCases(cs => [c, ...(cs ?? [])])
       pickCase(c.name)
       dlg.current?.close()
+      notify(L(`Tạo vụ án "${c.name}" thành công`, `Created case "${c.name}"`))
     } catch (e) {
       setCreateErr(e instanceof ApiError ? e.message : L('Không gọi được máy chủ', 'Cannot reach server'))
     } finally {
@@ -407,6 +522,18 @@ export default function Devices() {
   const pg = Math.min(page, pages - 1)
 
   // Đóng image chỉ khi bấm nút trên thẻ; máy đã có image (đóng xong) thì tự trích xuất tiếp
+  const prevRunRef = useRef<Record<string, boolean>>({})
+  useEffect(() => {
+    for (const [k, st] of Object.entries(states)) {
+      const was = prevRunRef.current[k]
+      if (was && !st.running && st.done && !st.error) {
+        const dev = k.split('\n')[1] || k
+        notify(L(`Hoàn tất xử lý "${dev}"`, `Completed processing "${dev}"`))
+      }
+      prevRunRef.current[k] = !!st.running
+    }
+  }, [states])
+
   const autoTried = useRef<Record<string, string>>({})
   useEffect(() => {
     if (!caseName) return
@@ -425,6 +552,7 @@ export default function Devices() {
     setErr('')
     try {
       await api.deviceImage(caseName, c.name, c.serial)
+      notify(L(`Bắt đầu thu thập & đóng gói "${c.name}"`, `Started acquisition for "${c.name}"`))
     } catch (err) {
       setErr((err as Error).message)
     }
@@ -437,6 +565,7 @@ export default function Devices() {
     setErr('')
     try {
       await api.deviceImage(caseName, c.name, c.serial)
+      notify(L(`Bắt đầu thu thập & đóng gói "${c.name}"`, `Started acquisition for "${c.name}"`))
     } catch (err) {
       setErr((err as Error).message)
     }
@@ -448,6 +577,7 @@ export default function Devices() {
     try {
       if (stage === 'imaged' || stage === 'partial' || stage === 'error') {
         await api.deviceExtract(caseName, c.name)
+        notify(L(`Bắt đầu trích xuất dữ liệu "${c.name}"`, `Started extraction for "${c.name}"`))
       } else if (stage === 'done') {
         navigate(`/cases/${encodeURIComponent(caseName)}?device=${encodeURIComponent(c.name)}`)
       }
@@ -462,11 +592,21 @@ export default function Devices() {
       <header className="sticky top-0 z-30 shrink-0 bg-[#0a1f44] text-white border-b border-[#081833]">
         <div className="flex h-11 items-center justify-between px-3">
           <div className="flex items-center gap-3 min-w-0">
+            <div className="flex items-center min-w-0">
+              <span className="case-highlight-box">
+                <span className="case-highlight-inner px-3 py-0.5 text-[14px] font-extrabold uppercase tracking-wider text-[#00b8ff] whitespace-nowrap">
+                  {t('FORENSIC INVESTIGATION')}
+                </span>
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5">
             <select
               value={caseName}
               onChange={e => pickCase(e.target.value)}
               title={L("Chọn vụ án / dự án", "Select case / project")}
-              className="inline-flex items-center max-w-[220px] rounded bg-white/10 hover:bg-white/20 text-white px-2 py-1 text-xs font-medium transition-colors cursor-pointer outline-none [&>option]:text-navy"
+              className="inline-flex items-center max-w-[220px] rounded bg-white/10 hover:bg-white/20 text-white px-2 py-1 text-xs font-medium transition-colors cursor-pointer outline-none "
             >
               {!cases?.length && <option value="">{L("Chưa có vụ án", "No cases yet")}</option>}
               {cases?.map(c => (
@@ -476,20 +616,12 @@ export default function Devices() {
             <button
               type="button"
               onClick={openCreate}
-              title={L("Tạo vụ án mới", "Create new case")}
+              title={L("Quản lý vụ án", "Manage Cases")}
+              aria-label={L("Quản lý vụ án", "Manage Cases")}
               className="inline-flex items-center gap-1 rounded bg-white/10 hover:bg-[#0077cc] text-white px-1.5 py-1 text-[11px] font-medium cursor-pointer transition-colors"
             >
-              <Plus size={13} />
+              <FolderCog size={14} aria-hidden="true" />
             </button>
-            <div className="h-4 w-px bg-white/20" />
-            <div className="flex items-center gap-2 truncate">
-              <span className="text-xs font-bold uppercase tracking-wider text-[#00b8ff]">{t('FORENSIC INVESTIGATION')}</span>
-              <span className="text-xs text-slate-400">&bull;</span>
-              <span className="sensitive text-sm font-bold text-white truncate" title={caseName}>{caseName || L('Chưa chọn vụ án', 'No case selected')}</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1.5">
             <button
               type="button"
               disabled={!caseName}
@@ -501,26 +633,6 @@ export default function Devices() {
             </button>
             <button
               type="button"
-              disabled={!caseName}
-              onClick={() => navigate(`/cases/${encodeURIComponent(caseName)}`)}
-              className="inline-flex items-center gap-1.5 rounded bg-[#0077cc] hover:bg-[#0063ad] disabled:opacity-40 text-white px-2.5 py-1 text-xs font-medium transition-all shadow-xs cursor-pointer"
-            >
-              <Files size={13} />
-              <span>{L('Xem chứng cứ tổng', 'View All Evidence')}</span>
-            </button>
-            <span className="inline-flex items-center gap-1.5 rounded bg-white/10 text-white px-2.5 py-1 text-xs font-medium">
-              <HardDrive size={13} />
-              <span>{L('Thiết bị', 'Devices')} ({cards.length})</span>
-              <span
-                className={`ml-0.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${usb.length ? 'bg-[#00b8ff]/20 text-[#00b8ff]' : 'bg-white/10 text-slate-400'}`}
-                title="Devices connected"
-              >
-                <span className={`h-1.5 w-1.5 rounded-full ${usb.length ? 'bg-[#00b8ff] animate-pulse' : 'bg-slate-400'}`} aria-hidden="true" />
-                {usb.length > 0 ? `${L('Kết nối', 'Connected')}: ${usb.length}` : L('Không kết nối', 'No connection')}
-              </span>
-            </span>
-            <button
-              type="button"
               onClick={openAudit}
               title={L('Nhật ký hoạt động vụ án', 'Case activity log')}
               className="inline-flex items-center gap-1.5 rounded bg-white/10 hover:bg-white/20 text-white px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer"
@@ -528,6 +640,7 @@ export default function Devices() {
               <History size={13} aria-hidden="true" />
               <span>{L('Nhật ký vụ án', 'Case Log')}</span>
             </button>
+            <NotificationBell />
             <button
               type="button"
               onClick={() => { logout(); navigate('/login') }}
@@ -544,6 +657,7 @@ export default function Devices() {
       {/* Trang vừa 1 màn hình, không cuộn: biểu đồ cao vừa đủ, danh sách thiết bị (2 hàng x 5 cột) giãn lấp phần còn lại;
           cửa sổ quá thấp thì chỉ vùng này cuộn */}
       <main className="flex w-full min-h-0 flex-1 flex-col overflow-y-auto px-4 sm:px-6 lg:px-8 py-3">
+        <div className={`mb-4 rounded-2xl border p-4 shadow-sm backdrop-blur-md ${theme === 'dark' ? 'border-[#00b8ff]/25 bg-[#061836]/55' : theme === 'light' ? 'border-sky-300/50 bg-white/55' : 'border-line bg-card/60'}`}>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className={`font-display text-lg font-bold flex items-center gap-2 ${theme === 'dark' ? 'text-white' : 'text-navy'}`}>
@@ -577,52 +691,45 @@ export default function Devices() {
           </div>
         )}
 
-        {!cards.length && (
-          <div className="card mb-4 p-10 text-center text-muted border-dashed border-2">
-            <Smartphone className="mx-auto h-12 w-12 text-muted/40 mb-3" />
-            <p className="font-medium text-ink">{L("Chưa có thiết bị nào trong vụ án", "No devices in this case yet")}</p>
-            <p className="text-xs text-muted mt-1 max-w-md mx-auto">
-              Kết nối điện thoại vào cổng USB của hệ thống, bật chế độ Gỡ lỗi USB (USB Debugging) hoặc tin cậy máy tính (với iOS), hệ thống sẽ tự đóng image (SHA-256) và trích xuất.
-            </p>
-          </div>
-        )}
-
-        {/* Dashboard thống kê vụ án: số máy theo trạng thái + tệp theo loại; bên dưới là danh sách thiết bị */}
+        {/* Dashboard thống kê đồng bộ toàn hệ thống (hiển thị giống nhau ở mọi vụ án) */}
         {caseName && (() => {
-          const stageOf = (c: Card) => {
-            const st = states[`${caseName}\n${c.name}`]
-            return { st, stage: ((st && st.stage !== 'new' ? st.stage : c.dev?.stage) ?? 'new') as Stage }
-          }
-          const all = cards.map(stageOf)
-          const totalN = fstat?.n ?? devs.reduce((s, d) => s + d.count, 0)
-          const totalSize = fstat?.size ?? devs.reduce((s, d) => s + (d.size ?? 0), 0)
-          // 1) vòng tròn: thiết bị theo trạng thái (cùng màu viền thẻ)
+          const allDevList = globalDevs.length ? globalDevs : devs.map(d => ({ ...d, _case: caseName }))
+          const devStates = allDevList.map(d => {
+            const st = states[`${d._case}\n${d.name}`]
+            return { st, stage: ((st && st.stage !== 'new' ? st.stage : d.stage) ?? 'new') as Stage }
+          })
+          const devTotalCount = Math.max(allDevList.length, cards.length)
+          const fsUse = globalFstat ?? fstat
+          const totalN = fsUse?.n ?? (cases ?? []).reduce((s, c) => s + c.count, 0)
+          const totalSize = fsUse?.size ?? allDevList.reduce((s, d) => s + (d.size ?? 0), 0)
+          // 1) vòng tròn: thiết bị theo trạng thái (toàn hệ thống)
           const status = [
-            { label: L('Đã trích xuất', 'Extracted'), color: '#00b8ff', n: all.filter(x => !x.st?.error && x.stage === 'done').length },
-            { label: L('Đã có image', 'Imaged'), color: '#fbbf24', n: all.filter(x => !x.st?.error && (x.stage === 'imaged' || x.stage === 'partial')).length },
-            { label: L('Đang xử lý', 'Processing'), color: '#3b82f6', n: all.filter(x => !x.st?.error && (x.stage === 'imaging' || x.stage === 'extracting')).length },
-            { label: L('Lỗi', 'Error'), color: '#f43f5e', n: all.filter(x => x.st?.error || x.stage === 'error').length },
-            { label: L('Chưa đóng image', 'Not imaged'), color: '#cbd5e1', n: all.filter(x => !x.st?.error && x.stage === 'new').length },
+            { label: L('Đã trích xuất', 'Extracted'), color: '#00b8ff', n: devStates.filter(x => !x.st?.error && x.stage === 'done').length },
+            { label: L('Đã có image', 'Imaged'), color: '#fbbf24', n: devStates.filter(x => !x.st?.error && (x.stage === 'imaged' || x.stage === 'partial')).length },
+            { label: L('Đang xử lý', 'Processing'), color: '#3b82f6', n: devStates.filter(x => !x.st?.error && (x.stage === 'imaging' || x.stage === 'extracting')).length },
+            { label: L('Lỗi', 'Error'), color: '#f43f5e', n: devStates.filter(x => x.st?.error || x.stage === 'error').length },
+            { label: L('Chưa đóng image', 'Not imaged'), color: '#cbd5e1', n: devStates.filter(x => !x.st?.error && x.stage === 'new').length },
           ].filter(s => s.n)
           let acc = 0
-          // 2) cột ngang: tệp theo loại; 3) cột ngang: dung lượng theo thiết bị
-          const types = FILE_TYPES.map(t => ({ ...t, n: fstat?.by[t.key]?.n ?? 0, size: fstat?.by[t.key]?.size ?? 0 }))
+          // 2) cột ngang: tệp theo loại; 3) cột ngang: dung lượng theo thiết bị (toàn hệ thống)
+          const types = FILE_TYPES.map(t => ({ ...t, n: fsUse?.by[t.key]?.n ?? 0, size: fsUse?.by[t.key]?.size ?? 0 }))
             .filter(t => t.n).sort((a, b) => b.n - a.n)
           const maxType = Math.max(1, ...types.map(t => t.n))
-          const perDev = devs.filter(d => d.count).map(d => ({ name: d.name, size: d.size ?? 0, n: d.count })).sort((a, b) => b.size - a.size)
+          const perDev = allDevList.filter(d => d.count).map(d => ({ name: d.name, size: d.size ?? 0, n: d.count })).sort((a, b) => b.size - a.size)
           const maxDev = Math.max(1, ...perDev.map(d => d.size))
           const H = 'mb-2 flex items-baseline justify-between text-sm font-semibold text-navy'
           const CARD = 'flex flex-col rounded-xl border border-line bg-card p-3 shadow-sm'
-          // toàn hệ thống: mọi vụ án (không chỉ vụ đang chọn)
+          const allDevs = (cases ?? []).reduce((s, c) => s + c.device_count, 0) || allDevList.length
+          const allFiles = (cases ?? []).reduce((s, c) => s + c.count, 0) || totalN
           const sysKpis: [string, string, string][] = [
             [L('Vụ án', 'Cases'), (cases?.length ?? 0).toLocaleString(isVi ? 'vi' : 'en'), `${(cases ?? []).filter(c => c.count).length} ${L('vụ có dữ liệu', 'cases with data')}`],
-            [L('Thiết bị', 'Devices'), (cases ?? []).reduce((s, c) => s + c.device_count, 0).toLocaleString(isVi ? 'vi' : 'en'), L('trên mọi vụ án', 'across all cases')],
-            [L('Tổng tệp', 'Total Files'), (cases ?? []).reduce((s, c) => s + c.count, 0).toLocaleString(isVi ? 'vi' : 'en'), L('đã trích xuất', 'extracted')],
+            [L('Thiết bị', 'Devices'), allDevs.toLocaleString(isVi ? 'vi' : 'en'), L('trên mọi vụ án', 'across all cases')],
+            [L('Tổng tệp', 'Total Files'), allFiles.toLocaleString(isVi ? 'vi' : 'en'), L('đã trích xuất', 'extracted')],
             [L('Ổ lưu trữ', 'Storage'), sys ? `${Math.round((100 * sys.disk.used) / sys.disk.total)}%` : '–',
               sys ? `${fmtSize(sys.disk.used)} / ${fmtSize(sys.disk.total)}` : L('đang đọc…', 'reading…')],
           ]
           return (
-            <section aria-label={L("Thống kê", "Statistics")} className="mb-4 space-y-3">
+            <section aria-label={L("Thống kê", "Statistics")} className="space-y-3">
               <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 {sysKpis.map(([k, v, sub]) => (
                   <div key={k} className="rounded-xl border border-line bg-card px-5 py-3 shadow-sm">
@@ -634,14 +741,14 @@ export default function Devices() {
               </dl>
               <div className="grid gap-3 lg:grid-cols-3">
               <div className={CARD}>
-                <p className={H}><span>{L('Thiết bị theo trạng thái · vụ này', 'Devices by Status · This Case')}</span><span className="text-xs text-muted">{cards.length} {L('máy', 'devices')} · {cards.filter(c => c.usb).length} {L('đang cắm', 'connected')}</span></p>
+                <p className={H}><span>{L('Thiết bị theo trạng thái', 'Devices by Status')}</span><span className="text-xs text-muted">{devTotalCount} {L('máy', 'devices')} · {usb.length} {L('đang cắm', 'connected')}</span></p>
                 <div className="flex flex-1 items-center justify-around gap-4">
                   <div className="relative h-36 w-36 shrink-0">
                     <svg viewBox="0 0 36 36" className="h-36 w-36 -rotate-90" role="img"
                       aria-label={status.map(s => `${s.label} ${s.n}`).join(', ')}>
                       <circle cx="18" cy="18" r="14" fill="none" strokeWidth="6" stroke="rgb(255 255 255 / 0.08)" />
                       {status.map(s => {
-                        const len = (100 * s.n) / cards.length
+                        const len = (100 * s.n) / Math.max(1, devStates.length)
                         const el = <circle key={s.label} cx="18" cy="18" r="14" fill="none" strokeWidth="6" stroke={s.color}
                           pathLength={100} strokeDasharray={`${len} ${100 - len}`} strokeDashoffset={-acc}><title>{`${s.label}: ${s.n}`}</title></circle>
                         acc += len
@@ -649,7 +756,7 @@ export default function Devices() {
                       })}
                     </svg>
                     <span className="absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="font-display text-3xl font-bold text-navy tabular-nums">{cards.length}</span>
+                      <span className="font-display text-3xl font-bold text-navy tabular-nums">{devTotalCount}</span>
                       <span className="text-xs text-muted">{L("thiết bị", "devices")}</span>
                     </span>
                   </div>
@@ -666,7 +773,7 @@ export default function Devices() {
               </div>
 
               <div className={CARD}>
-                <p className={H}><span>{L('Tệp theo loại · vụ này', 'Files by Type · This Case')}</span><span className="text-xs text-muted">{totalN.toLocaleString(isVi ? 'vi' : 'en')} {L('tệp', 'files')}</span></p>
+                <p className={H}><span>{L('Tệp theo loại', 'Files by Type')}</span><span className="text-xs text-muted">{totalN.toLocaleString(isVi ? 'vi' : 'en')} {L('tệp', 'files')}</span></p>
                 <ul className="flex flex-1 flex-col justify-between gap-1">
                   {!types.length && <li className="m-auto text-xs text-muted">{L('Chưa có tệp trích xuất', 'No extracted files yet')}</li>}
                   {types.map(t => (
@@ -683,7 +790,7 @@ export default function Devices() {
               </div>
 
               <div className={CARD}>
-                <p className={H}><span>{L('Dung lượng theo thiết bị · vụ này', 'Storage by Device · This Case')}</span><span className="text-xs text-muted">{fmtSize(totalSize)}</span></p>
+                <p className={H}><span>{L('Dung lượng theo thiết bị', 'Storage by Device')}</span><span className="text-xs text-muted">{fmtSize(totalSize)}</span></p>
                 {/* 1 dòng/máy (tên | cột | dung lượng) như "Tệp theo loại": khối biểu đồ đủ thấp để trang không cuộn */}
                 <ul className="flex flex-1 flex-col justify-around gap-1">
                   {!perDev.length && <li className="m-auto text-xs text-muted">{L('Chưa có dữ liệu thiết bị', 'No device data yet')}</li>}
@@ -704,13 +811,47 @@ export default function Devices() {
             </section>
           )
         })()}
+        </div>
+
+        <div className={`flex flex-1 flex-col rounded-2xl border p-4 shadow-sm backdrop-blur-md ${theme === 'dark' ? 'border-[#00b8ff]/25 bg-[#061836]/55' : theme === 'light' ? 'border-sky-300/50 bg-white/55' : 'border-line bg-card/60'}`}>
+        {!cards.length && (
+          <div className="card mb-4 p-10 text-center text-muted border-dashed border-2">
+            <Smartphone className="mx-auto h-12 w-12 text-muted/40 mb-3" />
+            <p className="font-medium text-ink">{L("Chưa có thiết bị nào trong vụ án", "No devices in this case yet")}</p>
+            <p className="text-xs text-muted mt-1 max-w-md mx-auto">
+              Kết nối điện thoại vào cổng USB của hệ thống, bật chế độ Gỡ lỗi USB (USB Debugging) hoặc tin cậy máy tính (với iOS), hệ thống sẽ tự đóng image (SHA-256) và trích xuất.
+            </p>
+          </div>
+        )}
 
         {/* Danh sách thiết bị: 20 thẻ/trang = đúng 4 hàng x 5 cột, chia đều chiều cao còn lại; di chuột/focus vào thẻ để xem chi tiết */}
         {cards.length > 0 && (
-          <h3 className={`mb-2 flex items-baseline gap-2 font-display text-sm font-semibold ${theme === 'dark' ? 'text-white' : 'text-navy'}`}>
-            {L('Danh sách thiết bị của vụ án', 'Case Devices')} <span className="text-[#00b8ff]">{caseName}</span>
-            <span className={`text-xs font-normal ${theme === 'dark' ? 'text-slate-300' : 'text-muted'}`}>({cards.length})</span>
-          </h3>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h3 className={`flex items-baseline gap-2 font-display text-sm font-semibold ${theme === 'dark' ? 'text-white' : 'text-navy'}`}>
+                {L('Danh sách thiết bị của vụ án', 'Case Devices')} <span className="text-[#00b8ff]">{caseName}</span>
+                <span className={`text-xs font-normal ${theme === 'dark' ? 'text-slate-300' : 'text-muted'}`}>({cards.length})</span>
+              </h3>
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${usb.length ? 'border-[#00b8ff]/40 bg-[#00b8ff]/15 text-[#00b8ff]' : theme === 'dark' ? 'border-white/15 bg-white/10 text-slate-300' : 'border-slate-300 bg-slate-100 text-slate-600'}`}
+                title="Devices connected"
+              >
+                <HardDrive size={12} aria-hidden="true" />
+                <span className={`h-1.5 w-1.5 rounded-full ${usb.length ? 'bg-[#00b8ff] animate-pulse' : 'bg-slate-400'}`} aria-hidden="true" />
+                {usb.length > 0 ? `${L('Kết nối', 'Connected')}: ${usb.length}` : L('Không kết nối', 'No connection')}
+              </span>
+            </div>
+            <button
+              type="button"
+              disabled={!caseName}
+              onClick={() => navigate(`/cases/${encodeURIComponent(caseName)}`)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#00b8ff]/40 bg-[#00b8ff]/10 hover:bg-[#00b8ff]/20 px-3 py-1 text-xs font-medium text-[#00b8ff] transition-colors cursor-pointer disabled:opacity-40"
+            >
+              <Files size={13} />
+              <span>{L('Xem tất cả chứng cứ', 'View All Evidence')}</span>
+              <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
         )}
         <div className="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 lg:grid-rows-[repeat(4,1fr)]">
           {cards.slice(pg * PAGE, (pg + 1) * PAGE).map((c, i) => {
@@ -746,12 +887,12 @@ export default function Devices() {
                 role={openable ? 'link' : undefined}
                 onClick={openable ? () => act(c, 'done') : undefined}
                 onKeyDown={openable ? e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); act(c, 'done') } } : undefined}
-                className={`card group relative flex flex-col justify-center gap-2 rounded-xl border border-l-4 border-line ${border} bg-card p-3 shadow-sm outline-none transition-all duration-150 hover:z-20 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-within:z-20 ${openable ? 'cursor-pointer' : ''}`}
+                className={`card group relative flex flex-col justify-center gap-2.5 rounded-xl border border-l-4 border-line ${border} bg-card p-4 shadow-sm outline-none transition-all duration-150 hover:z-20 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/50 focus-within:z-20 ${openable ? 'cursor-pointer' : ''}`}
               >
                 {c.usb && <span aria-hidden="true" className="usb-ring" />}
                 {/* Thông tin cơ bản: ảnh/icon, tên, cắm cáp + hệ điều hành */}
                 <div className="flex items-center gap-2.5">
-                  <div className="flex h-12 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-line bg-slate-50 text-primary">
+                  <div className="flex h-14 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-slate-50 text-primary">
                     <DeviceThumb
                       name={c.dev?.info?.name || c.usb?.name || c.name.split(' · ')[0]}
                       serial={c.serial}
@@ -760,8 +901,8 @@ export default function Devices() {
                     />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <h3 className="truncate font-display text-sm font-bold text-navy" title={c.name}>{c.name}</h3>
-                    <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted">
+                    <h3 className="truncate font-display text-base font-bold text-navy" title={c.name}>{c.name}</h3>
+                    <p className="mt-1 flex items-center gap-1.5 text-xs text-muted">
                       <span className={`h-2 w-2 shrink-0 rounded-full ${c.usb ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} aria-hidden="true" />
                       {c.usb ? L('Đang cắm', 'Connected') : L('Đã rút cáp', 'Disconnected')} · {c.usb?.type === 'hdd' || c.dev?.type === 'hdd' ? L('Thẻ nhớ / USB', 'Card / USB') : isIos ? 'iOS' : 'Android'}
                     </p>
@@ -865,7 +1006,7 @@ export default function Devices() {
                         : <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />}
                     </IconBtn>
                   )}
-                  {isIos && c.usb && c.serial && (stage === 'done' || stage === 'imaged') && (
+                  {isIos && c.usb && c.serial && stage === 'imaged' && (
                     <IconBtn disabled={!caseName} onClick={(e) => reacquire(c, e)} label={`Thu thập lại (backup mã hoá) ${c.name}`}
                       tip="Thu thập lại (backup mã hoá): lấy thêm Keychain, lịch sử Safari, nhật ký cuộc gọi, Wi-Fi, Health. Máy tự tắt mã hoá sau khi xong; dữ liệu cũ giữ nguyên.">
                       <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
@@ -996,63 +1137,146 @@ export default function Devices() {
             <span className={`ml-2 text-xs ${theme === 'dark' ? 'text-slate-300' : 'text-muted'}`}>{pg * PAGE + 1}–{Math.min((pg + 1) * PAGE, cards.length)} / {cards.length} thiết bị</span>
           </nav>
         )}
+        </div>
       </main>
 
-      {/* Dialog tạo vụ án mới */}
-      <dialog ref={dlg} aria-labelledby="new-case-title" onClick={closeOnBackdrop} className={DLG}>
-        <form onSubmit={create} noValidate className="flex flex-col gap-4 p-5">
+      {/* Màn hình quản lý vụ án */}
+      <dialog ref={dlg} aria-labelledby="new-case-title" onClick={closeOnBackdrop} className="m-auto w-[min(46rem,calc(100vw-2rem))] max-h-[88vh] rounded-xl bg-card p-0 text-ink shadow-xl backdrop:bg-navy/40">
+        <div className="flex flex-col gap-4 p-5">
           <div className="flex items-center justify-between gap-2 border-b border-line pb-3">
             <h2 id="new-case-title" className="flex items-center gap-2 font-display text-base font-semibold text-navy">
-              <FolderPlus className="h-4 w-4 text-primary" aria-hidden="true" /> {L("Tạo vụ án", "Create Case")} mới
+              <FolderPlus className="h-4 w-4 text-primary" aria-hidden="true" /> {L("Quản lý vụ án", "Case Management")} ({cases?.length ?? 0})
             </h2>
-            <button type="button" onClick={() => dlg.current?.close()} aria-label="Đóng" className={CLOSE}>
+            <button type="button" onClick={() => dlg.current?.close()} aria-label={L("Đóng", "Close")} className={CLOSE}>
               <X className="h-4 w-4" />
             </button>
           </div>
 
-          <div>
-            <label htmlFor="new-case-name" className="mb-1 block text-sm font-medium text-ink">
-              {L('Tên vụ án / Hồ sơ', 'Case / Record Name')}
-            </label>
+          <form onSubmit={create} noValidate className="flex items-center gap-2">
             <input
               ref={nameRef}
               id="new-case-name"
               value={newName}
-              onChange={e => setNewName(e.target.value)}
+              onChange={e => { setNewName(e.target.value); setCreateErr('') }}
               maxLength={60}
-              placeholder="VD: Vu-an-01-2026"
+              placeholder={L("Nhập tên vụ án mới (VD: Vu-an-01-2026)…", "Enter new case name…")}
               aria-invalid={!!createErr}
-              aria-describedby={createErr ? 'new-case-err' : undefined}
-              className={FIELD}
+              className={`${FIELD} flex-1`}
             />
-          </div>
+            <button type="submit" disabled={busyCreating} className={BTN}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              {busyCreating ? L('Đang tạo…', 'Creating…') : L('Tạo vụ án', 'Create')}
+            </button>
+          </form>
 
           {createErr && (
-            <p id="new-case-err" role="alert" className="text-xs text-rose-600 font-medium">
+            <p id="new-case-err" role="alert" className="text-xs text-rose-400 font-medium">
               {createErr}
             </p>
           )}
 
-          <p className="text-xs text-muted leading-relaxed">
-            {L('Vụ án mới sẽ tự động được chọn làm vụ đang làm việc. Thiết bị sẽ được thêm vào vụ án khi cắm máy.', 'The new case will be selected automatically. Devices are added when plugged in.')}
-          </p>
+          {mgrDelCase && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-cyan-400/40 bg-cyan-500/10 px-3 py-2 text-xs">
+              <span>{L('Xác nhận xoá vụ án', 'Confirm delete case')} <strong className="text-white">{mgrDelCase}</strong>?</span>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => setMgrDelCase(null)} className="rounded border border-line px-2.5 py-1 text-xs hover:bg-white/10 cursor-pointer">{L('Huỷ', 'Cancel')}</button>
+                <button type="button" disabled={mgrBusy} onClick={() => doDeleteCase(mgrDelCase)} className="rounded bg-rose-600 hover:bg-rose-500 px-2.5 py-1 text-xs font-medium text-white cursor-pointer disabled:opacity-50">
+                  {mgrBusy ? L('Đang xoá…', 'Deleting…') : L('Xoá vụ án', 'Delete')}
+                </button>
+              </div>
+            </div>
+          )}
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-line">
+          <div className="max-h-[52vh] space-y-2 overflow-y-auto pr-1">
+            {!cases?.length ? (
+              <p className="py-8 text-center text-sm text-muted">{L('Chưa có vụ án nào.', 'No cases yet.')}</p>
+            ) : (
+              cases.map(c => {
+                const active = c.name === caseName
+                const editing = mgrEditCase === c.name
+                return (
+                  <div
+                    key={c.name}
+                    className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-sm transition-colors ${active ? 'border-primary/60 bg-primary/10' : 'border-line hover:bg-white/5'}`}
+                  >
+                    {editing ? (
+                      <div className="flex flex-1 items-center gap-2">
+                        <input
+                          type="text"
+                          value={mgrEditVal}
+                          onChange={e => setMgrEditVal(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') { e.preventDefault(); doRenameCase(c.name) }
+                            if (e.key === 'Escape') setMgrEditCase(null)
+                          }}
+                          autoFocus
+                          className={`${FIELD} py-1 text-xs flex-1`}
+                        />
+                        <button type="button" disabled={mgrBusy} onClick={() => doRenameCase(c.name)} className="rounded bg-primary px-2.5 py-1 text-xs font-medium text-white cursor-pointer">
+                          {L('Lưu', 'Save')}
+                        </button>
+                        <button type="button" onClick={() => setMgrEditCase(null)} className="rounded border border-line px-2.5 py-1 text-xs text-muted hover:text-ink cursor-pointer">
+                          {L('Huỷ', 'Cancel')}
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => { pickCase(c.name); dlg.current?.close() }}
+                          className="min-w-0 flex-1 text-left cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="truncate font-semibold text-ink">{c.name}</span>
+                            {active && (
+                              <span className="shrink-0 rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                                {L('Đang chọn', 'Active')}
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-xs text-muted">
+                            {(c.device_count ?? 0)} {L('thiết bị', 'devices')} · {(c.count ?? 0).toLocaleString(isVi ? 'vi' : 'en')} {L('tài liệu', 'files')} · {formatDateTime(c.created_at)}
+                          </p>
+                        </button>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => { setMgrEditCase(c.name); setMgrEditVal(c.name); setMgrDelCase(null) }}
+                            title={L('Đổi tên vụ án', 'Rename case')}
+                            className="rounded p-1.5 text-[#38c8ff] hover:bg-white/10 cursor-pointer"
+                          >
+                            <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setMgrDelCase(c.name); setMgrEditCase(null) }}
+                            title={L('Xoá vụ án', 'Delete case')}
+                            className="rounded p-1.5 text-[#38c8ff] hover:bg-white/10 cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )
+              })
+            )}
+          </div>
+
+          <div className="flex justify-end border-t border-line pt-2">
             <button type="button" onClick={() => dlg.current?.close()} className={BTN2}>
-              Hủy
-            </button>
-            <button type="submit" disabled={busyCreating} className={BTN}>
-              {busyCreating ? L('Đang tạo…', 'Creating…') : L('Tạo vụ án', 'Create Case')}
+              {L('Đóng', 'Close')}
             </button>
           </div>
-        </form>
+        </div>
       </dialog>
 
       {/* Đồng bộ vụ án: chọn thiết bị đã đóng image -> hàng chờ gửi lên hệ thống trung tâm */}
       <dialog ref={syncDlg} aria-labelledby="sync-title" onClick={closeOnBackdrop} className="m-auto w-[min(60rem,calc(100vw-2rem))] max-h-[90vh] rounded-xl bg-card p-0 text-ink shadow-xl backdrop:bg-navy/40">
         {(() => {
           const inCase = cards.filter(c => c.dev)
-          const okNames = inCase.filter(c => c.dev?.image_name).map(c => c.dev?.name ?? c.name)
+          const okNames = inCase.filter(c => c.dev?.image_name || (c.dev?.count ?? 0) > 0).map(c => c.dev?.name ?? c.name)
           return (
             <div className="flex flex-col gap-4 p-5">
               <div className="flex items-center justify-between gap-2 border-b border-line pb-3">
@@ -1065,7 +1289,7 @@ export default function Devices() {
                 </button>
               </div>
               <p className="text-xs leading-relaxed text-muted">
-                {L('Chọn thiết bị để gửi bản image (kèm SHA-256) và thông tin thiết bị lên hệ thống trung tâm.', 'Select devices to send image files (with SHA-256) and device metadata to the central server.')}
+                {L('Gửi sang CDS vào thư mục mang tên vụ án. Không chọn tệp: gửi tin nhắn, danh bạ, cuộc gọi, ghi chú đã trích.', 'Send to CDS into a folder named after the case. No files picked: send extracted chats, contacts, calls, notes.')}
               </p>
               <label className="flex items-center gap-2 text-sm font-medium text-ink">
                 <input
@@ -1075,14 +1299,14 @@ export default function Devices() {
                   onChange={e => setSyncSel(new Set(e.target.checked ? okNames : []))}
                   className="h-4 w-4 accent-primary"
                 />
-                Chọn tất cả ({okNames.length} thiết bị có image)
+                {L(`Chọn tất cả (${okNames.length} thiết bị sẵn sàng)`, `Select all (${okNames.length} ready devices)`)}
               </label>
               <fieldset className="max-h-[52vh] space-y-2 overflow-y-auto pr-1">
                 <legend className="sr-only">Thiết bị trong vụ án</legend>
                 {!inCase.length && <p className="text-sm text-muted">Vụ án chưa có thiết bị</p>}
                 {inCase.map(c => {
                   const name = c.dev?.name ?? c.name
-                  const ok = !!c.dev?.image_name
+                  const ok = !!(c.dev?.image_name || (c.dev?.count ?? 0) > 0)
                   const s = syncs[name]
                   const expanded = syncExpand === name
                   const flist = syncFiles[name]
@@ -1105,9 +1329,9 @@ export default function Devices() {
                         >
                           <span className="block truncate font-medium text-ink">{name}</span>
                           <span className="block truncate text-xs text-muted">
-                            {ok ? c.dev?.image_name : L('Chưa đóng image', 'Not imaged yet')}
+                            {c.dev?.image_name ? c.dev.image_name : (c.dev?.count ? L('Đã trích xuất (chưa đóng gói)', 'Extracted (unpackaged)') : L('Chưa đóng image', 'Not imaged yet'))}
                             {c.dev?.count ? ` · ${c.dev.count.toLocaleString(isVi ? 'vi' : 'en')} ${L('tài liệu', 'files')}` : ''}
-                            {fsel ? ` (${L('đã chọn', 'selected')} ${fsel.size})` : ''}
+                            {fsel?.size ? ` (${L('lọc chọn', 'filtered')} ${fsel.size})` : (c.dev?.count ? ` (${L('gửi tin nhắn, danh bạ, ghi chú', 'chats, contacts, notes')})` : '')}
                           </span>
                         </button>
                         {s && (
@@ -1125,36 +1349,121 @@ export default function Devices() {
                         </button>
                       </div>
                       {expanded && (
-                        <div className="border-t border-line bg-black/20 px-3 py-2 text-xs">
-                          {syncFilesBusy === name ? (
+                        <div className="border-t border-line bg-black/20 px-3 py-2 text-xs space-y-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {([
+                              ['', L('Tất cả', 'All'), c.dev?.count ?? 0],
+                              ['image', L('Ảnh', 'Images'), syncFilesStats[name]?.image?.n ?? 0],
+                              ['video', L('Video', 'Videos'), syncFilesStats[name]?.video?.n ?? 0],
+                              ['audio', L('Âm thanh', 'Audio'), syncFilesStats[name]?.audio?.n ?? 0],
+                              ['document', L('Tài liệu', 'Documents'), syncFilesStats[name]?.document?.n ?? 0],
+                              ['other', L('Khác', 'Other'), syncFilesStats[name]?.other?.n ?? 0],
+                            ] as [Kind | '', string, number][]).map(([k, label, cnt]) => {
+                              if (k && syncFilesStats[name] && !cnt) return null
+                              const active = (syncFilesKind[name] ?? '') === k
+                              return (
+                                <button
+                                  key={k || 'all'}
+                                  type="button"
+                                  onClick={() => {
+                                    setSyncFilesKind(m => ({ ...m, [name]: k }))
+                                    loadSyncFiles(name, 1, syncFilesQ[name] ?? '', k, false)
+                                  }}
+                                  className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium cursor-pointer transition-colors ${active ? 'bg-primary text-white' : 'border border-line text-muted hover:text-ink hover:bg-white/10'}`}
+                                >
+                                  {label}{cnt > 0 ? ` (${cnt.toLocaleString(isVi ? 'vi' : 'en')})` : ''}
+                                </button>
+                              )
+                            })}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={syncFilesQ[name] ?? ''}
+                              onChange={e => {
+                                const q = e.target.value
+                                setSyncFilesQ(m => ({ ...m, [name]: q }))
+                              }}
+                              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); loadSyncFiles(name, 1, syncFilesQ[name] ?? '', syncFilesKind[name] ?? '', false) } }}
+                              placeholder={L('Tìm tên tài liệu để chọn lẻ (để trống nếu gửi toàn bộ)…', 'Search file name to pick specific files…')}
+                              className="flex-1 rounded border border-line bg-bg px-2.5 py-1 text-xs text-ink outline-none focus:border-primary"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => loadSyncFiles(name, 1, syncFilesQ[name] ?? '', syncFilesKind[name] ?? '', false)}
+                              className="rounded border border-line px-2.5 py-1 text-xs text-ink hover:bg-white/10 cursor-pointer"
+                            >
+                              {L('Tìm', 'Search')}
+                            </button>
+                            {!!fsel?.size && (
+                              <button
+                                type="button"
+                                onClick={() => setSyncFileSel(m => ({ ...m, [name]: new Set() }))}
+                                className="rounded border border-line px-2 py-1 text-xs text-muted hover:text-ink cursor-pointer"
+                              >
+                                {L('Bỏ lọc (gửi hết)', 'Clear filter')}
+                              </button>
+                            )}
+                          </div>
+                          {syncFilesBusy === name && !flist?.length ? (
                             <p className="py-2 text-center text-muted">{L('Đang tải danh sách tài liệu…', 'Loading files…')}</p>
                           ) : !flist?.length ? (
-                            <p className="py-2 text-center text-muted">{L('Chưa có tài liệu nào được trích xuất.', 'No extracted files yet.')}</p>
+                            <p className="py-2 text-center text-muted">{L('Không tìm thấy tài liệu nào.', 'No files found.')}</p>
                           ) : (
                             <div className="space-y-1">
-                              <label className="flex items-center gap-2 pb-1 border-b border-line/60 font-medium text-ink cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={flist.length > 0 && flist.every(f => fsel?.has(f.id))}
-                                  onChange={e => toggleAllSyncFiles(name, e.target.checked)}
-                                  className="h-3.5 w-3.5 accent-primary"
-                                />
-                                <span>{L('Chọn tất cả tài liệu', 'Select all files')} ({flist.length})</span>
-                              </label>
+                              <div className="flex items-center justify-between gap-2 pb-1 border-b border-line/60">
+                                <label className="flex items-center gap-2 font-medium text-ink cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={flist.length > 0 && flist.every(f => fsel?.has(f.id))}
+                                    onChange={e => toggleAllSyncFiles(name, e.target.checked)}
+                                    className="h-3.5 w-3.5 accent-primary"
+                                  />
+                                  <span>
+                                    {L('Chọn danh sách đang hiện', 'Select loaded')} ({flist.length} / {(syncFilesTotal[name] ?? flist.length).toLocaleString(isVi ? 'vi' : 'en')})
+                                  </span>
+                                </label>
+                                <span className="text-[11px] text-muted">
+                                  {fsel?.size ? L(`Chỉ gửi ${fsel.size} tệp đã chọn`, `Sending ${fsel.size} selected`) : L('Mặc định: gửi toàn bộ', 'Default: send all')}
+                                </span>
+                              </div>
                               <div className="max-h-64 space-y-1 overflow-y-auto pt-1 pr-1">
                                 {flist.map(f => (
-                                  <label key={f.id} className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-white/5 cursor-pointer">
-                                    <input
-                                      type="checkbox"
-                                      checked={!!fsel?.has(f.id)}
-                                      onChange={() => toggleSyncFile(name, f.id)}
-                                      className="h-3.5 w-3.5 shrink-0 accent-primary"
-                                    />
-                                    <span className="min-w-0 flex-1 truncate text-ink" title={f.name}>{f.name}</span>
+                                  <div key={f.id} className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-white/5">
+                                    <label className="flex min-w-0 flex-1 items-center gap-2 cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={!!fsel?.has(f.id)}
+                                        onChange={() => toggleSyncFile(name, f.id)}
+                                        className="h-3.5 w-3.5 shrink-0 accent-primary"
+                                      />
+                                      <span className="min-w-0 flex-1 truncate text-ink" title={f.name}>{f.name}</span>
+                                    </label>
                                     <span className="shrink-0 font-mono tabular-nums text-[10.5px] text-muted">{fmtSize(f.size)}</span>
-                                  </label>
+                                    <button
+                                      type="button"
+                                      onClick={() => openSyncPreview(name, f)}
+                                      title={L('Xem nội dung trước khi gửi', 'Preview content')}
+                                      aria-label={L('Xem nội dung', 'Preview')}
+                                      className="shrink-0 rounded p-1 text-muted hover:bg-white/10 hover:text-cyan-300 cursor-pointer"
+                                    >
+                                      <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+                                    </button>
+                                  </div>
                                 ))}
                               </div>
+                              {(syncFilesTotal[name] ?? 0) > flist.length && (
+                                <div className="pt-1 text-center">
+                                  <button
+                                    type="button"
+                                    disabled={syncFilesBusy === name}
+                                    onClick={() => loadSyncFiles(name, (syncFilesPage[name] ?? 1) + 1, syncFilesQ[name] ?? '', syncFilesKind[name] ?? '', true)}
+                                    className="rounded border border-line px-3 py-1 text-xs text-ink hover:bg-white/10 cursor-pointer disabled:opacity-50"
+                                  >
+                                    {syncFilesBusy === name ? L('Đang tải…', 'Loading…') : L(`Tải thêm (${(syncFilesTotal[name] - flist.length).toLocaleString('vi')} còn lại)`, `Load more (${syncFilesTotal[name] - flist.length} left)`)}
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1164,7 +1473,7 @@ export default function Devices() {
                 })}
               </fieldset>
               <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                Chưa kết nối hệ thống trung tâm: thiết bị được đưa vào hàng chờ và sẽ gửi khi cấu hình kết nối xong.
+                Dữ liệu trong CDS: ai có quyền xem kho đều đọc và hỏi được. Tệp đã gửi mà không đổi nội dung thì không gửi lại.
               </p>
               {syncMsg && <p role="status" className="text-xs font-medium text-ink">{syncMsg}</p>}
               <div className="flex justify-end gap-2 border-t border-line pt-2">
@@ -1180,6 +1489,66 @@ export default function Devices() {
           )
         })()}
       </dialog>
+      {/* Xem nhanh nội dung tệp trước khi đồng bộ */}
+      <dialog ref={previewDlg} onClick={closeOnBackdrop} className={`${DLG} w-[min(52rem,calc(100vw-2rem))] max-h-[88vh]`}>
+        {previewFile && (
+          <div className="flex flex-col gap-3 p-5">
+            <div className="flex items-start justify-between gap-3 border-b border-line pb-3">
+              <div className="min-w-0 flex-1">
+                <h3 className="truncate font-display text-base font-semibold text-navy" title={previewFile.name}>{previewFile.name}</h3>
+                <p className="truncate text-xs text-muted" title={previewFile.path}>{fmtSize(previewFile.size)} · {previewFile.path}</p>
+              </div>
+              <button type="button" onClick={() => previewDlg.current?.close()} aria-label={L('Đóng', 'Close')} className={CLOSE}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto">
+              {previewFile.kind === 'image' ? (
+                <div className="space-y-2 text-center">
+                  <img src={previewFile.file_url} alt={previewFile.name} className="mx-auto max-h-[55vh] rounded-lg object-contain" />
+                  {(previewFile.caption || previewFile.ocr_text) && (
+                    <p className="text-left text-xs text-muted whitespace-pre-wrap">{previewFile.caption || previewFile.ocr_text}</p>
+                  )}
+                </div>
+              ) : previewFile.kind === 'video' ? (
+                <video src={previewFile.file_url} controls className="max-h-[55vh] w-full rounded-lg bg-black" />
+              ) : previewFile.kind === 'audio' ? (
+                <audio src={previewFile.file_url} controls className="w-full" />
+              ) : previewBusy ? (
+                <p className="py-8 text-center text-sm text-muted">{L('Đang tải nội dung…', 'Loading content…')}</p>
+              ) : (previewFile.text_content || previewFile.ocr_text) ? (
+                <pre className="whitespace-pre-wrap break-words rounded-lg border border-line bg-black/30 p-3 font-mono text-xs leading-relaxed text-ink">
+                  {previewFile.text_content || previewFile.ocr_text}
+                </pre>
+              ) : (
+                <div className="py-6 text-center space-y-2">
+                  <p className="text-sm text-muted">{L('Tệp không có nội dung văn bản xem trước.', 'No text preview available.')}</p>
+                  <a href={previewFile.file_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs font-medium text-primary hover:bg-white/5">
+                    {L('Mở tệp gốc', 'Open raw file')}
+                  </a>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-between gap-2 border-t border-line pt-3">
+              {previewFile._dev ? (
+                <button
+                  type="button"
+                  onClick={() => toggleSyncFile(previewFile._dev!, previewFile.id)}
+                  className={BTN2}
+                >
+                  {syncFileSel[previewFile._dev]?.has(previewFile.id)
+                    ? L('Bỏ chọn tệp này', 'Unselect file')
+                    : L('Chọn gửi tệp này', 'Select this file')}
+                </button>
+              ) : <span />}
+              <button type="button" onClick={() => previewDlg.current?.close()} className={BTN}>
+                {L('Đóng', 'Close')}
+              </button>
+            </div>
+          </div>
+        )}
+      </dialog>
+
       {/* Dialog sửa tên thiết bị */}
       <dialog ref={renameDlg} onClick={e => e.target === renameDlg.current && renameDlg.current.close()} className={DLG}>
         <form onSubmit={submitRename} className="p-5 space-y-4">
@@ -1287,15 +1656,21 @@ export default function Devices() {
               'device.create': 'Thêm thiết bị',
               'device.delete': 'Xoá thiết bị',
               'device.rename': 'Đổi tên thiết bị',
-              'device.image': 'Đóng image',
+              'device.image': 'Đóng gói dữ liệu',
               'device.extract': 'Trích xuất',
               'pull.start': 'Thu thập ADB',
               'package.create': 'Đóng gói chứng cứ',
-              'sync.queue': 'Đồng bộ',
+              'sync.queue': 'Xếp hàng đồng bộ',
+              'sync.send': 'Đã gửi đồng bộ',
               'phone.connect': 'Cắm thiết bị',
               'phone.disconnect': 'Rút thiết bị',
               'file.delete': 'Xoá tệp',
             }[a] ?? a) : a)
+            const detailLabel = (d: string) => (isVi ? ({
+              'hdd': 'Thẻ nhớ / USB',
+              'phone': 'Điện thoại',
+              'usb': 'USB',
+            }[d] ?? d) : d)
             return (
               <ul className="divide-y divide-line text-xs">
                 {list.map(a => (
@@ -1307,7 +1682,7 @@ export default function Devices() {
                         </span>
                         {a.target && <span className="truncate font-medium text-ink">{a.target}</span>}
                       </div>
-                      {a.detail && <p className="mt-0.5 truncate text-[11px] text-muted">{a.detail}</p>}
+                      {a.detail && <p className="mt-0.5 truncate text-[11px] text-muted">{detailLabel(a.detail)}</p>}
                     </div>
                     <span className="shrink-0 font-mono tabular-nums text-[11px] text-muted">{formatDateTime(a.created_at)}</span>
                   </li>
@@ -1317,12 +1692,7 @@ export default function Devices() {
           })()}
         </div>
       </dialog>
-      {toast && (
-        <div role="status" className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-xl border border-[#00b8ff]/50 bg-[#061836]/95 px-4 py-2.5 text-sm font-medium text-white shadow-[0_0_24px_rgba(0,184,255,0.4)] backdrop-blur-md">
-          <CheckCircle2 className="h-4 w-4 shrink-0 text-[#38c8ff]" aria-hidden="true" />
-          <span>{toast}</span>
-        </div>
-      )}
+
     </div>
   )
 }

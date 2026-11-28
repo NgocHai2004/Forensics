@@ -55,6 +55,7 @@ services:
       - ANTHROPIC_BASE_URL=http://host.docker.internal:11434   # Ollama sẵn có trên host (container "ollama", dùng chung với anythingllm)
       - ANTHROPIC_AUTH_TOKEN=ollama
       - LLM_MODEL=qwen3-vl-32k
+      - TZ=Asia/Ho_Chi_Minh
       - INDEX_WORKERS=2
       - LLM_TEXT_BUDGET=50000
       - ASR_URL=http://ai:9001

@@ -36,7 +36,7 @@
 /* Nền màn chính: ảnh forensic (navy + vân tay + sóng dữ liệu); màu dự phòng khi ảnh chưa tải.
    Kiểu HUD tối theo mẫu: chỉ đổi token trong phạm vi .app-bg, bố cục/TSX giữ nguyên; trang khác vẫn sáng */
 @utility app-bg {
-  background: #06142e url('/bg-case.jpg') center / cover no-repeat;
+  background: linear-gradient(rgb(4 14 34 / 0.55), rgb(4 14 34 / 0.65)), #06142e url('/bg-case.jpg') center / cover no-repeat;
   --color-card: rgb(8 24 54 / 0.82);
   --color-ink: #e6f1ff;
   --color-muted: #94aecb;          /* trên nền thẻ tối ~7:1 */
@@ -198,7 +198,7 @@
 
 /* === CASE DETAIL HUD === */
 .case-hud {
-  background: #06142e url('/bg-case.jpg') center / cover no-repeat;
+  background: linear-gradient(rgb(4 14 34 / 0.55), rgb(4 14 34 / 0.65)), #06142e url('/bg-case.jpg') center / cover no-repeat;
   color: #e6f1ff;
   color-scheme: dark;
 }
@@ -363,7 +363,7 @@
 
 /* === LIGHT HUD THEME === */
 .app-bg-light {
-  background: #eef5fc url('/bg-forensic-light.jpg') center / cover no-repeat;
+  background: linear-gradient(rgb(238 245 252 / 0.42), rgb(238 245 252 / 0.52)), #eef5fc url('/bg-forensic-light.jpg') center / cover no-repeat;
   --color-card: rgb(255 255 255 / 0.78);
   --color-ink: #0f2544;
   --color-muted: #4b6484;
@@ -436,7 +436,7 @@
 
 /* CaseDetail Light HUD */
 .case-hud-light {
-  background: #eef5fc url('/bg-forensic-light.jpg') center / cover no-repeat;
+  background: linear-gradient(rgb(238 245 252 / 0.42), rgb(238 245 252 / 0.52)), #eef5fc url('/bg-forensic-light.jpg') center / cover no-repeat;
   color: #0f2544;
 }
 .case-hud-light > header {
@@ -512,4 +512,42 @@
   mask-composite: exclude;
   filter: drop-shadow(0 0 6px rgb(255 255 255 / 0.65));
   animation: usb-spin 3.2s linear infinite;
+}
+
+.app-bg select option, .case-hud select option { background-color: #0a1f44; color: #f8fafc; }
+.app-bg-light select option, .case-hud-light select option { background-color: #ffffff; color: #0f2544; }
+
+@keyframes case-border-spin {
+  to { transform: rotate(360deg); }
+}
+
+.case-highlight-box {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 0 10px rgb(2 132 199 / 0.28);
+}
+
+.case-highlight-box::before {
+  content: "";
+  position: absolute;
+  inset: -150%;
+  background: conic-gradient(from 0deg, #0284c7 0deg, #00d4ff 90deg, #10b981 180deg, #0284c7 270deg, #00d4ff 360deg);
+  animation: case-border-spin 3.5s linear infinite;
+}
+
+.case-highlight-inner {
+  position: relative;
+  z-index: 1;
+  border-radius: 6px;
+  background-color: #081a38;
+  color: #f8fafc;
+}
+
+.app-bg-light .case-highlight-inner {
+  background-color: #ffffff;
+  color: #0a1f44;
 }

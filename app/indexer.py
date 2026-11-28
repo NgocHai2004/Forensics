@@ -602,19 +602,44 @@ def scan(folder, data_dir, progress=None, collection=None, device=None, ai=True)
     run = lambda **f: db.index_runs.update_one({"_id": run_id}, {"$set": f})
     processed = 0
     try:
-        paths, data_abs = [], os.path.normcase(os.path.abspath(data_dir))
-        for root, dirs, names in os.walk(folder):
-            # thư mục ẩn trên điện thoại (.gs_fs0 cache ảnh app, .keyguard hình khoá màn hình...) là chứng cứ -> vẫn quét;
-            # chỉ bỏ rác đã biết (ảnh thu nhỏ, thùng rác, metadata git/Windows/macOS)
-            dirs[:] = [d for d in dirs if d.lower() not in SKIP_DIRS
-                       and os.path.normcase(os.path.abspath(os.path.join(root, d))) != data_abs]  # không index chính data/
-            # chỉ file thường: symlink (-> /proc/self/environ), thiết bị (/dev/zero), FIFO (treo scan) bị bỏ.
-            # -wal/-shm/-journal của SQLite được đọc kèm file CSDL chính, không index riêng
-            paths += [p for p in (os.path.abspath(os.path.join(root, n)) for n in names if n.lower() not in SKIP_FILES
-                                  and not n.lower().endswith(("-wal", "-shm", "-journal")))
-                      if stat.S_ISREG(os.lstat(p).st_mode)]
-        total = len(paths)
-        run(total=total)
+        paths, total, fast_done = [], 0, 0
+        rust_bin = "/usr/local/bin/mf-fast"
+        used_rust = False
+        if os.path.isfile(rust_bin):
+            try:
+                conn.close()
+                proc = subprocess.run(
+                    [rust_bin, folder, data_dir, collection or "", device or ""],
+                    capture_output=True, text=True, timeout=3600,
+                )
+                conn = init_db(os.path.join(data_dir, "index.db"))
+                if proc.returncode == 0:
+                    used_rust = True
+                    for line in proc.stderr.splitlines():
+                        if line.startswith("RUST_DONE:"):
+                            parts = line.split(":")
+                            total = int(parts[1])
+                            fast_done = int(parts[2])
+                    paths = [l for l in proc.stdout.splitlines() if l.strip()]
+                    processed += fast_done
+                    run(total=total, done=fast_done)
+                    if progress and total:
+                        progress(fast_done, total)
+            except Exception as e:
+                print(f"mf-fast lỗi, fallback Python: {e}")
+                conn = init_db(os.path.join(data_dir, "index.db"))
+                used_rust = False
+
+        if not used_rust:
+            data_abs = os.path.normcase(os.path.abspath(data_dir))
+            for root, dirs, names in os.walk(folder):
+                dirs[:] = [d for d in dirs if d.lower() not in SKIP_DIRS
+                           and os.path.normcase(os.path.abspath(os.path.join(root, d))) != data_abs]
+                paths += [p for p in (os.path.abspath(os.path.join(root, n)) for n in names if n.lower() not in SKIP_FILES
+                                      and not n.lower().endswith(("-wal", "-shm", "-journal")))
+                          if stat.S_ISREG(os.lstat(p).st_mode)]
+            total = len(paths)
+            run(total=total)
         def work(c, path):
             try:
                 return index_one(c, llm, path, data_dir, collection, device, ai)
@@ -629,11 +654,13 @@ def scan(folder, data_dir, progress=None, collection=None, device=None, ai=True)
                 return False
 
         # ponytail: song song theo file (thời gian chủ yếu chờ LLM/ASR); ghi SQLite vẫn tuần tự nhờ khóa WAL
-        for done, ok in enumerate(_pool(data_dir, paths, work), 1):
+        base_done = total - len(paths) if used_rust else 0
+        for idx_i, ok in enumerate(_pool(data_dir, paths, work), 1):
+            done = base_done + idx_i
             processed += ok
             if progress:
                 progress(done, total)
-            if done % 5 == 0:
+            if idx_i % 5 == 0:
                 run(done=done)
         if ai:  # giai đoạn 1 (ai=False): embedding do luồng AI nền làm (main._ai_loop), không bắt người dùng chờ
             try:  # embedding cho chunk mới; Ollama lỗi / chưa có retrieval.py -> lần scan sau embed tiếp

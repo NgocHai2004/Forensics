@@ -197,12 +197,12 @@ export const api = {
   login: (username: string, password: string) => req<{ username: string; open: boolean }>('/api/login', { username, password }),
   // Tải đủ mọi trang (server giới hạn 200/lần) để danh sách và số đếm khớp tổng thật của vụ án.
   // shortcut: chỉ tải 20.000 tệp mới nhất (149k tệp ~ 575 MB JSON làm treo trình duyệt); cần phân trang phía server nếu muốn duyệt hết
-  allFiles: async (collection: string, max = 20000) => {
-    const first = await api.files({ collection, page: 1, limit: 200 })
+  allFiles: async (collection: string, max = 20000, device?: string) => {
+    const first = await api.files({ collection, device: device || undefined, page: 1, limit: 200 })
     const items: FileItem[] = [...first.items]
     const pages = Math.min(Math.ceil(first.total / 200), max / 200)
     for (let p = 2; p <= pages; p += 6) {
-      const rs = await Promise.all(Array.from({ length: Math.min(6, pages - p + 1) }, (_, i) => api.files({ collection, page: p + i, limit: 200 })))
+      const rs = await Promise.all(Array.from({ length: Math.min(6, pages - p + 1) }, (_, i) => api.files({ collection, device: device || undefined, page: p + i, limit: 200 })))
       for (const r of rs) items.push(...r.items)
     }
     return { items, total: first.total }

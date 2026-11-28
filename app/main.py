@@ -10,7 +10,9 @@ import tarfile
 import sqlite3
 import subprocess
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import time
+import mimetypes, urllib.error, urllib.request, uuid
 from pathlib import Path
 
 from typing import Literal
@@ -563,7 +565,9 @@ def _device_query(serial: str, ios: bool, name: str) -> str:
                     return ""
             brand = gp("ro.product.brand") or gp("ro.product.manufacturer")
             model = gp("ro.product.model")
-            return gp("ro.product.marketname") or _market_name(model) or (brand + " " + model).strip()
+            res = gp("ro.product.marketname") or _market_name(model) or (brand + " " + model).strip()
+            if res:
+                return res
     except (OSError, subprocess.SubprocessError):
         pass
     # máy đã rút cáp: mã model nằm trong tên thiết bị (vd "LENOVO TB305XU") -> tra tên thương mại
@@ -581,6 +585,8 @@ _play: dict[str, str] = {}
 
 def _market_name(model: str) -> str:
     """Mã model Android (vd TB305XU) -> tên thương mại chính thức theo danh sách thiết bị Google Play (tải 1 lần ~5 MB)."""
+    if not model or not model.strip():
+        return ""
     with _play_lock:
         if not _play:
             try:
@@ -591,7 +597,7 @@ def _market_name(model: str) -> str:
                 raw = fp.read_bytes()
                 text = raw.decode("utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8", "ignore")
                 for row in csv.reader(io.StringIO(text)):
-                    if len(row) == 4 and row[1].strip():
+                    if len(row) == 4 and row[1].strip() and row[3].strip():
                         brand, market = row[0].strip(), row[1].split(" / ")[0].strip()
                         _play.setdefault(row[3].strip().upper(), market if market.lower().startswith(brand.lower()) else f"{brand} {market}")
             except Exception:  # noqa: BLE001 - không có mạng / CSV hỏng: coi như không tra được, lần sau thử lại
@@ -985,43 +991,40 @@ def _androidqf_collect(serial: str, dest: Path):
     _write(meta / "logcat.txt", _adb_shell(serial, "logcat -d -t 2000", 120))
     # 6) dumpsys tổng thể (battery, wifi, bluetooth, telephony...)
     _write(meta / "dumpsys.txt", _adb_shell(serial, "dumpsys", 180))
-    # 7) Bugreport nếu thiết bị cho phép (zip lớn; bỏ qua khi lỗi)
+    # 7) Danh bạ, Nhật ký cuộc gọi, Thông báo, SMS — nhanh, ưu tiên lấy trước bugreport
+    _write(meta / "contacts.txt", _adb_shell(serial, "content query --uri content://contacts/phones --projection display_name:number"))
+    _write(meta / "call_log.txt", _adb_shell(serial, "content query --uri content://call_log/calls --projection date:number:type:duration:name --sort 'date DESC'"))
+    _write(meta / "notifications.txt", _adb_shell(serial, "dumpsys notification --noredact 2>/dev/null || dumpsys notification", 120))
+    _write(meta / "sms.txt", _adb_shell(serial, "content query --uri content://sms --projection address:date:type:read:body --sort 'date DESC'", 120))
+    # 8) files.json — bảng kê file /sdcard (bỏ sha1sum để nhanh)
+    try:
+        out = _adb_shell(serial, "find /sdcard/ -type f 2>/dev/null | head -n 5000", 120)
+        rows = [{"path": line.strip()} for line in out.splitlines() if line.strip()]
+        (meta / "files.json").write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")
+    except Exception:  # noqa: BLE001 - bảng kê là tùy chọn
+        pass
+    # 9) APK của app bên thứ ba — kéo song song 4 luồng
+    apk = meta / "apk"
+    apk.mkdir(exist_ok=True)
+    apks = []
+    for line in _adb_shell(serial, "pm list packages -f -3").splitlines():
+        path, _, pkg = line.strip().removeprefix("package:").rpartition("=")
+        if path.endswith(".apk") and re.fullmatch(r"[\w.]+", pkg):
+            apks.append((path, apk / f"{pkg}.apk"))
+    if apks:
+        def _pull_apk(item):
+            try:
+                subprocess.run([ADB, "-s", serial, "pull", item[0], str(item[1])], capture_output=True, timeout=300)
+            except (OSError, subprocess.SubprocessError):
+                pass
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            list(ex.map(_pull_apk, apks))
+    # 10) Bugreport đặt cuối cùng (mất nhiều thời gian nhất)
     try:
         subprocess.run([ADB, "-s", serial, "bugreport", str(meta / "bugreport.zip")],
                        capture_output=True, timeout=300)
     except (OSError, subprocess.SubprocessError):
         pass
-    # 8) files.json — bảng kê toàn bộ file /sdcard kèm checksum (giống AndroidQF, non-root)
-    try:
-        # 2000 file đầu (đủ cho bảng kê), hash ngay trên máy bằng MỘT lệnh (xargs) thay vì 2000 lệnh adb riêng lẻ
-        out = _adb_shell(serial, "find /sdcard/ -type f 2>/dev/null | head -n 2000 | tr '\\n' '\\0' | xargs -0 sha1sum 2>/dev/null", 300)
-        rows = []
-        for line in out.splitlines():
-            h, _, path = line.partition("  ")
-            if path.strip():
-                rows.append({"path": path.strip(), "sha1": h if len(h) == 40 else None})
-        (meta / "files.json").write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")
-    except Exception:  # noqa: BLE001 - bảng kê là tùy chọn
-        pass
-    # 9) Danh bạ (thông tin bạn bè) — content provider, không root, đa số máy cho đọc
-    _write(meta / "contacts.txt", _adb_shell(serial, "content query --uri content://contacts/phones --projection display_name:number"))
-    # 10) Nhật ký cuộc gọi — một số máy chặn, bọc ngoại lệ
-    _write(meta / "call_log.txt", _adb_shell(serial, "content query --uri content://call_log/calls --projection date:number:type:duration:name --sort 'date DESC'"))
-    # 11) Thông báo hiện tại (tin nhắn Zalo/FB mới nhất, OTP...) — nguồn tin nhắn không-root
-    _write(meta / "notifications.txt", _adb_shell(serial, "dumpsys notification --noredact 2>/dev/null || dumpsys notification", 120))
-    # 12) SMS — chỉ đọc; Android mới có thể trả "Permission Denial" (vẫn ghi lại làm biên bản)
-    _write(meta / "sms.txt", _adb_shell(serial, "content query --uri content://sms --projection address:date:type:read:body --sort 'date DESC'", 120))
-    # 13) APK của app bên thứ ba — chỉ sao chép, không gỡ app
-    # shortcut: chỉ base.apk, bỏ split APK; thêm split nếu cần cài lại app để phân tích
-    apk = meta / "apk"
-    apk.mkdir(exist_ok=True)
-    for line in _adb_shell(serial, "pm list packages -f -3").splitlines():
-        path, _, pkg = line.strip().removeprefix("package:").rpartition("=")
-        if path.endswith(".apk") and re.fullmatch(r"[\w.]+", pkg):
-            try:
-                subprocess.run([ADB, "-s", serial, "pull", path, str(apk / f"{pkg}.apk")], capture_output=True, timeout=300)
-            except (OSError, subprocess.SubprocessError):
-                pass
 
 
 def _write(p: Path, text: str):
@@ -1153,7 +1156,9 @@ def _ios_collect(serial: str, dest: Path, st: dict, sess_id=None) -> tuple[int, 
                 db.sessions.update_one({"id": sess_id}, {"$set": {"backup_password": None, "backup_encryption": "failed"}})
     try:
         st.update(phase="pull", log="Đang backup iPhone (giữ màn hình mở khoá, đã tin tưởng máy này)…", pct=0, files=0, bytes=0)
-        r = subprocess.run(["idevicebackup2", "-u", serial, "backup", "--full", str(bd)],
+        has_prev = any(bd.glob("*/Manifest.db"))
+        cmd_ios = ["idevicebackup2", "-u", serial, "backup", *([] if has_prev else ["--full"]), str(bd)]
+        r = subprocess.run(cmd_ios,
                            capture_output=True, text=True, timeout=9000)
         tail = " ".join((r.stdout or "").strip().splitlines()[-12:]) or (r.stderr or "")[:200]
         if r.returncode:
@@ -1520,7 +1525,7 @@ def _ios_files(dest: Path, case: str, device: str) -> int:
                 raise RuntimeError("Backup iPhone đã mã hoá nhưng biên bản phiên không có mật khẩu")
             from iphone_backup_decrypt import EncryptedBackup
             n += EncryptedBackup(backup_directory=str(root), passphrase=sess["backup_password"]).extract_files(
-                output_folder=str(out), preserve_folders=True, domain_subfolders=True) or 0
+                domain_like='%', output_folder=str(out), preserve_folders=True, domain_subfolders=True) or 0
             continue
         c = sqlite3.connect(f"file:{man}?mode=ro", uri=True)
         try:
@@ -1594,10 +1599,13 @@ def _disk_collect(disk: dict, dest: Path, st: dict) -> tuple[int, int]:
                       log=f"Đang lấy tệp: {s / 2**30:.1f} / ~{total / 2**30:.1f} GB")
     threading.Thread(target=watch, daemon=True).start()
     try:
-        for i, (off, _) in enumerate(parts, 1):
+        def _recover_part(item):
+            i, (off, _) = item
             d = out / f"p{i}"
-            d.mkdir(parents=True)
+            d.mkdir(parents=True, exist_ok=True)
             subprocess.run(["tsk_recover", "-e", *(["-o", off] if off else []), src, str(d)], capture_output=True, timeout=6 * 3600)
+        with ThreadPoolExecutor(max_workers=min(4, max(1, len(parts)))) as ex:
+            list(ex.map(_recover_part, enumerate(parts, 1)))
     finally:
         stop.set()
     if not Path(src).exists():
@@ -1613,9 +1621,22 @@ def _disk_collect(disk: dict, dest: Path, st: dict) -> tuple[int, int]:
     return n, s
 
 
-def _android_tar_stream(serial: str, dest: Path, st: dict, total: int) -> tuple[int, int] | None:
-    """Stream tar trực tiếp qua adb exec-out (1 luồng USB liên tục, không tốn bộ nhớ tạm trên điện thoại).
-    Trả (files, bytes) nếu thành công; trả None nếu thiết bị không hỗ trợ tar hoặc stream rỗng để fallback về adb pull."""
+class _TeeReader:
+    """Đọc 1 lượt từ stream vào tarfile đồng thời ghi song song ra file trên đĩa (tránh đọc/ghi 2 lần)."""
+    def __init__(self, src_f, dst_f):
+        self.src_f, self.dst_f = src_f, dst_f
+
+    def read(self, n=-1):
+        b = self.src_f.read(n)
+        if b:
+            self.dst_f.write(b)
+        return b
+
+
+def _android_tar_stream(serial: str, dest: Path, st: dict, total: int,
+                        arc_tf: tarfile.TarFile | None = None) -> tuple[int, int] | None:
+    """Stream tar trực tiếp qua adb exec-out cho /sdcard và thẻ nhớ ngoài (/storage/<UUID> nếu có).
+    Ghi song song ra dest và gói .tar đích trong 1 lượt đọc duy nhất."""
     try:
         has_tar = subprocess.run([ADB, "-s", serial, "shell", "command -v tar >/dev/null 2>&1"],
                                  capture_output=True, timeout=10).returncode == 0
@@ -1624,48 +1645,69 @@ def _android_tar_stream(serial: str, dest: Path, st: dict, total: int) -> tuple[
     if not has_tar:
         return None
 
-    out_root = dest / "sdcard"
-    out_root.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.Popen([ADB, "-s", serial, "exec-out", "cd /sdcard && tar -cf - . 2>/dev/null"],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Tìm thêm thẻ nhớ ngoài gắn trong máy Android (/storage/<UUID>, bỏ emulated/self)
+    sources: list[tuple[str, str]] = [("/sdcard", "sdcard")]
+    try:
+        vols = subprocess.run([ADB, "-s", serial, "shell", "ls -1 /storage 2>/dev/null"],
+                              capture_output=True, text=True, timeout=10).stdout.splitlines()
+        for v in vols:
+            v = v.strip()
+            if v and v not in ("emulated", "self", "sdcard0"):
+                sources.append((f"/storage/{v}", f"storage/{v}"))
+    except (OSError, subprocess.SubprocessError):
+        pass
+
     n = s = 0
     last_ui = time.monotonic()
     st.update(log="Đang kéo dữ liệu (stream tar qua USB)…")
-    try:
-        with tarfile.open(fileobj=proc.stdout, mode="r|", bufsize=1 << 20) as tf:
-            for m in tf:
-                rel = Path(m.name.lstrip("./"))
-                if not rel.parts or rel.is_absolute() or ".." in rel.parts:
-                    continue
-                target = out_root / rel
-                if m.isdir():
-                    target.mkdir(parents=True, exist_ok=True)
-                elif m.isfile():
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    src_f = tf.extractfile(m)
-                    if src_f is None:
+    for remote_dir, local_prefix in sources:
+        out_root = dest / local_prefix
+        out_root.mkdir(parents=True, exist_ok=True)
+        proc = subprocess.Popen(
+            [ADB, "-s", serial, "exec-out", f"cd '{remote_dir}' && tar -cf - . 2>/dev/null"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            with tarfile.open(fileobj=proc.stdout, mode="r|", bufsize=1 << 20) as tf:
+                for m in tf:
+                    rel = Path(m.name.lstrip("./"))
+                    if not rel.parts or rel.is_absolute() or ".." in rel.parts:
                         continue
-                    with src_f, target.open("wb") as dst_f:
-                        shutil.copyfileobj(src_f, dst_f, 1 << 20)
-                    if m.mtime:
-                        try:
-                            os.utime(target, (m.mtime, m.mtime))
-                        except OSError:
-                            pass
-                    n += 1
-                    s += m.size
-                    now = time.monotonic()
-                    if now - last_ui >= 0.5:
-                        st.update(files=n, bytes=s, pct=min(99, round(100 * s / total)) if total else 0)
-                        last_ui = now
-    except (tarfile.TarError, OSError):
-        pass
-    finally:
-        if proc.stdout:
-            proc.stdout.close()
-        proc.wait(timeout=30)
-        if proc.stderr:
-            proc.stderr.close()
+                    target = out_root / rel
+                    arc_name = f"{local_prefix}/{rel.as_posix()}"
+                    if m.isdir():
+                        target.mkdir(parents=True, exist_ok=True)
+                    elif m.isfile():
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        src_f = tf.extractfile(m)
+                        if src_f is None:
+                            continue
+                        with src_f, target.open("wb") as dst_f:
+                            if arc_tf is not None:
+                                ti = tarfile.TarInfo(name=arc_name)
+                                ti.size, ti.mtime, ti.mode = m.size, m.mtime, m.mode or 0o644
+                                arc_tf.addfile(ti, _TeeReader(src_f, dst_f))
+                            else:
+                                shutil.copyfileobj(src_f, dst_f, 1 << 20)
+                        if m.mtime:
+                            try:
+                                os.utime(target, (m.mtime, m.mtime))
+                            except OSError:
+                                pass
+                        n += 1
+                        s += m.size
+                        now = time.monotonic()
+                        if now - last_ui >= 0.5:
+                            st.update(files=n, bytes=s, pct=min(99, round(100 * s / total)) if total else 0)
+                            last_ui = now
+        except (tarfile.TarError, OSError):
+            pass
+        finally:
+            if proc.stdout:
+                proc.stdout.close()
+            proc.wait(timeout=30)
+            if proc.stderr:
+                proc.stderr.close()
 
     if n == 0:
         return None
@@ -1693,25 +1735,50 @@ def _acquire_worker(serial: str, case: str, device: str, dest: Path):
             sim = _sim_props(serial)
             if sim:
                 (dest / "sim.txt").write_text("\n".join(f"{k} = {v}" for k, v in sim.items()) + "\n", encoding="utf-8")
-            # tổng trên máy: du (KB) + số file; thư mục bị chặn quyền (Android/data) bị bỏ qua ở cả hai phía
-            out = subprocess.run([ADB, "-s", serial, "shell", "du -sk /sdcard/ 2>/dev/null; find /sdcard/ -type f 2>/dev/null | wc -l"],
-                                 capture_output=True, text=True, timeout=600).stdout.split()
+            # Chỉ lấy du -sk để ước lượng %; bỏ find | wc -l để kéo ngay không chờ đếm file
+            out = subprocess.run([ADB, "-s", serial, "shell", "du -sk /sdcard/ 2>/dev/null"],
+                                 capture_output=True, text=True, timeout=120).stdout.split()
             total = int(out[0]) << 10 if out and out[0].isdigit() else 0
-            st.update(phase="pull", total_bytes=total, total_files=int(out[-1]) if out and out[-1].isdigit() else 0,
-                      log="Đang kéo dữ liệu…")
+            st.update(phase="pull", total_bytes=total, total_files=0, log="Đang kéo dữ liệu…")
             base_n, base_s = _tree(dest)  # kéo lại vào thư mục có sẵn file: chỉ tính phần mới
             log = DATA / f"pull-{serial}.log"
             n = s = 0
             aqf_err: list = []
 
-            def aqf():  # thu thập hệ thống (getprop/dumpsys/bugreport/sha1) song song với pull: trước đây tốn thêm ~5 phút sau pull
+            def aqf():  # thu thập hệ thống (getprop/dumpsys/bugreport/contacts/sms/apk) song song với pull
                 try:
                     _androidqf_collect(serial, dest)
                 except Exception as e:  # noqa: BLE001 - thu thập phụ không được làm hỏng luồng chính
                     aqf_err.append(str(e)[:120])
             aqf_t = threading.Thread(target=aqf, daemon=True)
             aqf_t.start()
-            streamed = _android_tar_stream(serial, dest, st, total)
+
+            # Mở sẵn gói .tar đích để ghi song song trong 1 lượt đọc duy nhất nếu stream tar thành công
+            PACKAGES.mkdir(parents=True, exist_ok=True)
+            safe_case = "".join(c if c.isalnum() or c in "-_" else "_" for c in case)
+            arc_path = PACKAGES / f"{safe_case}-{time.strftime('%Y%m%d-%H%M%S')}.tar"
+            streamed = None
+            raw_arc = arc_tf = None
+            try:
+                raw_arc = arc_path.open("wb", buffering=1 << 20)
+                arc_tf = tarfile.open(fileobj=raw_arc, mode="w|", format=tarfile.PAX_FORMAT, bufsize=1 << 20)
+                arc_tf.copybufsize = 1 << 20
+                streamed = _android_tar_stream(serial, dest, st, total, arc_tf)
+                if streamed is None:
+                    arc_tf.close(); arc_tf = None
+                    raw_arc.close(); raw_arc = None
+                    arc_path.unlink(missing_ok=True)
+            except Exception:
+                if arc_tf:
+                    try: arc_tf.close()
+                    except Exception: pass
+                if raw_arc:
+                    try: raw_arc.close()
+                    except Exception: pass
+                arc_path.unlink(missing_ok=True)
+                arc_tf = raw_arc = None
+                streamed = None
+
             if streamed is not None:
                 n, s = streamed
                 last = f"Stream tar hoàn tất ({n:,} tệp)"
@@ -1736,6 +1803,13 @@ def _acquire_worker(serial: str, case: str, device: str, dest: Path):
                     raise RuntimeError(last or "adb pull lỗi")
             # rút cáp giữa chừng: adb lỗi nhưng đã kéo được một phần -> không đóng gói image thiếu như image đủ
             if subprocess.run([ADB, "-s", serial, "get-state"], capture_output=True, text=True, timeout=15).stdout.strip() != "device":
+                if arc_tf:
+                    try: arc_tf.close()
+                    except Exception: pass
+                if raw_arc:
+                    try: raw_arc.close()
+                    except Exception: pass
+                arc_path.unlink(missing_ok=True)
                 raise RuntimeError("Mất kết nối với điện thoại giữa chừng (rút cáp?): cắm lại rồi đóng image lại")
             if aqf_t.is_alive():
                 st.update(phase="pull", pct=100, log="Kéo xong; đang chờ thu thập dữ liệu hệ thống (bugreport)…")
@@ -1744,8 +1818,31 @@ def _acquire_worker(serial: str, case: str, device: str, dest: Path):
                 st.update(log=f"Kéo xong; thu thập hệ thống bỏ qua: {aqf_err[0]}")
             n, s = (x - b for x, b in zip(_tree(dest), (base_n, base_s)))  # tính cả _aqf
             st.update(files=n, bytes=s, pct=100, log=last)
-        # Đóng gói tar.gz + manifest SHA256 (đúng nghĩa "đóng image kèm hash")
-        st.update(phase="package", pct=0, log="Đang đóng gói image (tar + SHA256)…")
+
+            if arc_tf is not None and raw_arc is not None:
+                # Ghi nốt sim.txt và _aqf vào gói .tar đang mở (không phải đọc lại hàng chục GB từ dest/sdcard)
+                for extra in [dest / "sim.txt", *sorted((dest / "_aqf").rglob("*") if (dest / "_aqf").is_dir() else [])]:
+                    if extra.is_file():
+                        rel = str(extra.relative_to(dest)).replace("\\", "/")
+                        arc_tf.add(str(extra), arcname=rel, recursive=False)
+                arc_tf.close()
+                raw_arc.close()
+                row_id = next_id("packages")
+                arc = arc_path
+                db.packages.insert_one({
+                    "id": row_id, "case_name": case, "source": str(dest), "name": arc.name,
+                    "size": arc.stat().st_size, "sha256": "", "status": "done", "error": None,
+                    "log": f"Xong (stream): {arc.name} ({arc.stat().st_size:,} bytes)", "created_at": indexer.now(),
+                })
+                pkg = db.packages.find_one({"id": row_id})
+                st.update(stage="imaged", phase=None, running=False, done=True, pct=100,
+                          image_sha256="", image_name=arc.name,
+                          log=f"Đã đóng image: {arc.name} ({arc.stat().st_size:,} bytes)")
+                if sess_id is not None:
+                    db.sessions.update_one({"id": sess_id}, {"$set": {"status": "done", "bytes": s, "finished_at": indexer.now()}})
+                return
+
+        st.update(phase="package", pct=0, log="Đang đóng gói image (.tar)…")
 
         def pkg_progress(done, total):
             pct = min(100, round(100 * done / total))
@@ -1969,14 +2066,20 @@ def sync_queue(req: SyncReq):
     for device in dict.fromkeys(clean_name(d) for d in req.devices):  # bỏ trùng, giữ thứ tự
         pkg = db.packages.find_one({"source": str(UPLOADS / case / device), "status": "done"},
                                    {"_id": 0, "id": 1, "name": 1, "sha256": 1, "size": 1}, sort=[("id", -1)])
-        if not pkg:
-            out.append({"device": device, "status": "skipped", "error": "chưa đóng image"})
-            continue
         fids = (req.files or {}).get(device)
+        if not pkg:
+            cnt, sz = _rconn().execute(
+                "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM files WHERE collection = ? AND device = ?",
+                (case, device),
+            ).fetchone()
+            if not cnt and not (UPLOADS / case / device).is_dir():
+                out.append({"device": device, "status": "skipped", "error": "chưa có dữ liệu"})
+                continue
+            pkg = {"id": None, "name": f"{device} (đã trích xuất)", "sha256": "", "size": int(sz or 0)}
         if not fids:
             dup_key = {"sha256": pkg["sha256"]} if pkg.get("sha256") else {"package_id": pkg["id"]}
             if dup := db.syncs.find_one({"case_name": case, "device": device, **dup_key,
-                                         "status": {"$in": ["pending", "sending", "done"]}}, {"_id": 0}):
+                                         "status": {"$in": ["pending", "sending"]}}, {"_id": 0}):
                 out.append(dup)
                 continue
         row = {"id": next_id("syncs"), "case_name": case, "device": device, "package_id": pkg["id"],
@@ -1987,7 +2090,172 @@ def sync_queue(req: SyncReq):
         detail = f"{pkg['name']} ({len(fids)} tài liệu)" if fids else pkg["name"]
         _audit(conn, "sync.queue", f"{case}/{device}", detail)
         out.append(row)
+    _sync_wake.set()
     return {"items": out}
+
+
+# --- Gửi hàng chờ sang CDS: tài liệu nằm thẳng trong thư mục mang tên vụ án ---
+CDS_URL = os.environ.get("CDS_URL", "").rstrip("/")
+CDS_USER, CDS_PASS = os.environ.get("CDS_USER", ""), os.environ.get("CDS_PASS", "")
+CDS_VAULT = os.environ.get("CDS_VAULT_ID") or None
+CDS_PART = 90 * 2**20   # CDS nhận ≤95 MB mỗi request (trần tunnel); tệp lớn hơn gửi theo khúc
+CDS_MAX = 500 * 2**20   # trần một tệp ghép khúc phía CDS
+_sync_wake = threading.Event()
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):  # phiên hết hạn CDS trả 307 về /login: coi là lỗi để đăng nhập lại
+        return None
+
+
+_CDS_HTTP = urllib.request.build_opener(_NoRedirect)
+
+
+class _Cds:
+    def __init__(self):
+        self.cookie = ""
+
+    def login(self):
+        r = urllib.request.Request(CDS_URL + "/api/auth/login", method="POST", headers={"Content-Type": "application/json"},
+                                   data=json.dumps({"username": CDS_USER, "password": CDS_PASS}).encode())
+        with _CDS_HTTP.open(r, timeout=30) as resp:
+            # cookie có cờ Secure, gọi qua http nội bộ nên tự lấy từ Set-Cookie rồi gửi tay
+            m = re.search(r"cds_session=[^;]+", " ".join(resp.headers.get_all("Set-Cookie") or []))
+        if not m:
+            raise RuntimeError("CDS không trả cookie đăng nhập")
+        self.cookie = m.group(0)
+
+    def req(self, method, path, body=None, ctype="application/json", retry=True):
+        if isinstance(body, dict):
+            body = json.dumps(body).encode()
+        r = urllib.request.Request(CDS_URL + path, data=body, method=method,
+                                   headers={"Cookie": self.cookie, **({"Content-Type": ctype} if body else {})})
+        try:
+            with _CDS_HTTP.open(r, timeout=300) as resp:
+                return json.loads(resp.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            if e.code in (307, 401) and retry:
+                self.login()
+                return self.req(method, path, body, ctype, False)
+            raise RuntimeError(f"CDS {e.code}: {e.read()[:200].decode('utf-8', 'replace')}") from None
+
+    def folder(self, name, parent):
+        """Thư mục đúng tên dưới parent; có rồi thì dùng lại (kể cả do người tạo tay)."""
+        for f in self.req("GET", "/api/cds/folders").get("folders", []):
+            if f.get("name") == name and (f.get("parentId") or None) == parent:
+                return f["id"]
+        body = {"name": name, "parentId": parent, **({"vaultId": CDS_VAULT} if CDS_VAULT and not parent else {})}
+        return self.req("POST", "/api/cds/folders", body)["folder"]["id"]
+
+    def _form(self, fields, name, mime, data):
+        b = uuid.uuid4().hex
+        head = "".join(f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n' for k, v in fields.items())
+        head += f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="{name.replace(chr(34), "_")}"\r\nContent-Type: {mime}\r\n\r\n'
+        return self.req("POST", "/api/cds/documents/upload", head.encode() + data + f"\r\n--{b}--\r\n".encode(),
+                        f"multipart/form-data; boundary={b}")
+
+    def upload(self, p: Path, folder, name: str):
+        size, mime = p.stat().st_size, mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+        base = {"folderId": folder, "createdBy": "mf-96"}
+        if size <= CDS_PART:
+            return self._form(base, name, mime, p.read_bytes())["document"]
+        if size > CDS_MAX:
+            raise RuntimeError(f"{size >> 20} MB, vượt trần 500 MB của CDS")
+        uid, off = uuid.uuid4().hex, 0
+        with open(p, "rb") as f:
+            while chunk := f.read(CDS_PART):
+                last = off + len(chunk) >= size
+                fields = {**base, "uploadId": uid, "offset": off, "total": size,
+                          **({"final": "1", "name": name, "mimeType": mime} if last else {})}
+                r = self._form(fields, name, mime, chunk)
+                off += len(chunk)
+        return r["document"]
+
+
+def _sync_files(row) -> list[Path]:
+    """Tệp đã tick; không tick -> tin nhắn, danh bạ, cuộc gọi, ghi chú đã trích (không đẩy ảnh/video hàng GB lên kho chữ)."""
+    if ids := row.get("file_ids"):
+        q = ",".join("?" * len(ids))
+        return [Path(r[0]) for r in _rconn().execute(
+            f"SELECT path FROM files WHERE id IN ({q}) AND collection = ? AND device = ?", (*ids, row["case_name"], row["device"]))]
+    base = UPLOADS / row["case_name"] / row["device"]
+    return sorted(p for sub in ("_chat", "_records") for p in (base / sub).rglob("*.txt"))
+
+
+def _sync_send(row):
+    case, device, sid = row["case_name"], row["device"], row["id"]
+    cds = _Cds()
+    cds.login()
+    folder = cds.folder(case, None)
+    paths = _sync_files(row)
+    prog = {"total": len(paths), "sent": 0, "failed": 0}
+    db.syncs.update_one({"id": sid}, {"$set": {"status": "sending", "cds_folder": folder, **prog}})
+    errs, wait = [], {}
+    for p in paths:
+        try:
+            sha = indexer.sha256(p)
+            old = db.cds_docs.find_one({"path": str(p)}, {"_id": 0})
+            if old and old["sha256"] == sha and old.get("cds_folder") == folder:  # đã có trên CDS, nội dung không đổi
+                prog["sent"] += 1
+            else:
+                wait[cds.upload(p, folder, p.name)["id"]] = (p, sha, old)
+        except Exception as e:  # noqa: BLE001 - một tệp lỗi không dừng cả lượt
+            prog["failed"] += 1
+            errs.append(f"{p.name}: {e}")
+        db.syncs.update_one({"id": sid}, {"$set": prog})
+    last = time.time()
+    while wait and time.time() - last < 1800:  # 30 phút không tệp nào học xong -> bỏ cuộc
+        time.sleep(5)
+        for did, (p, sha, old) in list(wait.items()):
+            d = cds.req("GET", f"/api/cds/documents/{did}")
+            d = d.get("document", d)
+            if d.get("status") not in ("ready", "error"):
+                continue
+            del wait[did]
+            last = time.time()
+            if d["status"] == "error":
+                prog["failed"] += 1
+                errs.append(f"{p.name}: CDS lỗi học tài liệu {d.get('error') or ''}")
+                continue
+            prog["sent"] += 1
+            db.cds_docs.update_one({"path": str(p)}, {"$set": {
+                "case_name": case, "device": device, "sha256": sha, "cds_doc_id": did, "cds_folder": folder,
+                "sent_at": indexer.now()}}, upsert=True)
+            if old and old.get("cds_doc_id") != did:  # bản mới đã học xong mới xoá bản cũ
+                try:
+                    cds.req("DELETE", f"/api/cds/documents/{old['cds_doc_id']}")
+                except Exception:  # noqa: BLE001 - bản cũ còn sót không hại dữ liệu mới
+                    pass
+        db.syncs.update_one({"id": sid}, {"$set": prog})
+    for p, _, _ in wait.values():
+        prog["failed"] += 1
+        errs.append(f"{p.name}: CDS chưa học xong sau 30 phút")
+    err = "; ".join(errs[:5]) + (f" … (+{len(errs) - 5} lỗi)" if len(errs) > 5 else "")
+    db.syncs.update_one({"id": sid}, {"$set": {**prog, "status": "error" if prog["failed"] else "done",
+                                               "error": err or None, "finished_at": indexer.now()}})
+    _audit(conn, "sync.send", f"{case}/{device}", f"CDS: {prog['sent']}/{prog['total']} tệp, lỗi {prog['failed']}")
+
+
+def _sync_loop():
+    db.syncs.update_many({"status": "sending"}, {"$set": {"status": "pending"}})  # khởi động lại giữa chừng: gửi tiếp, tệp đã có thì bỏ qua
+    while True:
+        _sync_wake.wait(60)
+        _sync_wake.clear()
+        if not (CDS_URL and CDS_USER):
+            continue
+        while row := db.syncs.find_one_and_update({"status": "pending"}, {"$set": {"status": "sending"}},
+                                                  sort=[("id", 1)], projection={"_id": 0}):
+            try:
+                _sync_send(row)
+            except Exception as e:  # noqa: BLE001 - CDS sập / sai tài khoản: báo lỗi trên dòng, luồng chạy tiếp
+                db.syncs.update_one({"id": row["id"]}, {"$set": {"status": "error", "error": f"{e}"[:300],
+                                                                 "finished_at": indexer.now()}})
+
+
+@app.on_event("startup")
+def _start_sync_loop():
+    _sync_wake.set()
+    threading.Thread(target=_sync_loop, daemon=True, name="sync-loop").start()
 
 
 @app.post("/api/device/extract")
@@ -2229,6 +2497,7 @@ def upload(collection: str = Form(...), device: str | None = Form(None), files: 
     uploads = UPLOADS
     folder = uploads / collection / device if device else uploads / collection
     folder.mkdir(parents=True, exist_ok=True)
+    saved_paths: list[str] = []
     for f in files:
         # nhập cả thư mục: filename là đường dẫn tương đối (a/b/c.jpg) -> giữ cây thư mục, làm sạch từng phần
         parts = [p for p in (clean_name(x) for x in (f.filename or "").replace("\\", "/").split("/")) if p] or ["file"]
@@ -2251,9 +2520,28 @@ def upload(collection: str = Form(...), device: str | None = Form(None), files: 
         if size > UPLOAD_MAX:
             dest.unlink()
             raise HTTPException(413, f"{name} vượt quá {UPLOAD_MAX >> 20} MB")
+        saved_paths.append(str(dest))
     indexer.ensure_case(conn, collection)  # vụ án hiện ngay cả khi index còn chạy
-    r = start_scan(folder, collection, f"đã lưu {len(files)} file vào {folder}, nhưng đang index; bấm Index lại sau",
-                   device or None)
+    try:
+        r = start_scan(folder, collection, f"đã lưu {len(files)} file vào {folder}, nhưng đang index; bấm Index lại sau",
+                       device or None)
+    except HTTPException as e:
+        if e.status_code != 409:
+            raise
+        # Đang có tiến trình scan lớn khác: vẫn index riêng các tệp vừa tải lên ở nền để không báo lỗi 409
+        def _index_uploaded():
+            from . import llm
+            c = indexer.init_db(str(DATA / "index.db"))
+            try:
+                for p in saved_paths:
+                    try:
+                        indexer.index_one(c, llm, p, str(DATA), collection, device or None, ai=False)
+                    except Exception:
+                        pass
+            finally:
+                c.close()
+        threading.Thread(target=_index_uploaded, daemon=True).start()
+        r = {"status": "started", "folder": str(folder)}
     return {"saved": len(files), **r}
 
 

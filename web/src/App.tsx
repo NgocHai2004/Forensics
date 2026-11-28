@@ -2,6 +2,7 @@ import { Suspense, lazy } from 'react'
 import type { ReactNode } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { getUser } from './auth'
+import { NotificationProvider } from './notify'
 import Login from './pages/Login'
 
 const CaseDetail = lazy(() => import('./pages/CaseDetail'))
@@ -14,6 +15,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
 export default function App() {
   return (
+    <NotificationProvider>
     <Routes>
       <Route path="/login" element={<Login />} />
       {/* Màn chính: danh sách thiết bị đang cắm -> Đóng image -> Trích xuất -> View */}
@@ -45,5 +47,6 @@ export default function App() {
       {/* Màn riêng xem dữ liệu đã trích xuất của một thiết bị */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </NotificationProvider>
   )
 }

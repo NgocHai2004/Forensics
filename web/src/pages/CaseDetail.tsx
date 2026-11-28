@@ -34,6 +34,7 @@ import { api, fmtSize } from '../api'
 import type { AuditEntry, Device, DeviceType, FileItem, FilesPage, Graph, PackageItem } from '../api'
 import { graphHtml } from '../graphHtml'
 import { useI18n } from '../i18n'
+import { NotificationBell, useNotify } from '../notify'
 import { logout } from '../auth'
 import { DeviceThumb } from '../components/DeviceThumb'
 
@@ -215,6 +216,31 @@ export default function CaseDetail() {
   // Modals tác vụ
   const [openCollectModal, setOpenCollectModal] = useState(false)
   const [openUploadModal, setOpenUploadModal] = useState(false)
+  const quickUploadRef = useRef<HTMLInputElement>(null)
+  const [quickUploading, setQuickUploading] = useState(false)
+  const handleQuickUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fl = e.target.files
+    if (!fl || !fl.length) return
+    const filesArr = Array.from(fl)
+    e.target.value = ''
+    const targetDev = activeDevice || devs?.items?.[0]?.name || undefined
+    setQuickUploading(true)
+    try {
+      const res = await api.upload(filesArr, name, targetDev)
+      const cnt = res.saved || filesArr.length
+      loadData()
+      notify(L(
+        `Tải lên thành công ${cnt} tệp${targetDev ? ` vào thiết bị "${targetDev}"` : ''}`,
+        `Uploaded ${cnt} file(s)${targetDev ? ` to "${targetDev}"` : ''} successfully`,
+      ))
+    } catch (err) {
+      notify(err instanceof Error ? err.message : L('Tải lên thất bại', 'Upload failed'))
+    } finally {
+      setQuickUploading(false)
+    }
+  }
+  const { notify } = useNotify()
+  const showToast = notify
   const [openPackageModal, setOpenPackageModal] = useState(false)
   const [openDeviceMgrModal, setOpenDeviceMgrModal] = useState(false)
   const [openAuditModal, setOpenAuditModal] = useState(false)
@@ -233,7 +259,7 @@ export default function CaseDetail() {
       setLoading(true)
       const [d, f] = await Promise.all([
         api.devices(name),
-        api.allFiles(name),
+        api.allFiles(name, activeDevice ? 20000 : 2000, activeDevice || undefined),
       ])
       setDevs(d)
       setFiles(f.items)
@@ -247,7 +273,7 @@ export default function CaseDetail() {
 
   useEffect(() => {
     loadData()
-  }, [name])
+  }, [name, activeDevice])
 
   // Trích xuất các tệp chứng cứ thực tế thành các Artifacts chuẩn Magnet AXIOM
   const buildArtifacts = useCallback((files: FileItem[]): ArtifactItem[] => {
@@ -737,7 +763,7 @@ export default function CaseDetail() {
       {/* =========================================================================
           ROW 1: MAGNET AXIOM TOP BAR
           ========================================================================= */}
-      <header className="shrink-0 bg-[#0a1f44] text-white border-b border-[#081833]">
+      <header className="relative z-50 shrink-0 bg-[#0a1f44] text-white border-b border-[#081833]">
         {/* Hàng 1: Tiêu đề vụ án & Toolbar các nút tác vụ */}
         <div className="flex h-11 items-center justify-between px-3">
           <div className="flex items-center gap-3 min-w-0">
@@ -765,21 +791,21 @@ export default function CaseDetail() {
 
           {/* Các nút tác vụ: Thu thập ADB, Tải tệp, Đóng gói, Thiết bị, Sơ đồ */}
           <div className="flex items-center gap-1.5">
+            <input
+              ref={quickUploadRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handleQuickUpload}
+            />
             <button
               type="button"
-              onClick={() => setOpenCollectModal(true)}
-              className="inline-flex items-center gap-1.5 rounded bg-[#0077cc] hover:bg-[#0063ad] text-white px-2.5 py-1 text-xs font-medium transition-all shadow-xs cursor-pointer"
+              disabled={quickUploading}
+              onClick={() => quickUploadRef.current?.click()}
+              className="inline-flex items-center gap-1.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-50 text-white px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer"
             >
-              <Smartphone size={13} />
-              <span>{t('Collect USB / ADB')}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setOpenUploadModal(true)}
-              className="inline-flex items-center gap-1.5 rounded bg-white/10 hover:bg-white/20 text-white px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer"
-            >
-              <Upload size={13} />
-              <span>{t('Upload files')}</span>
+              <Upload size={13} className={quickUploading ? 'animate-pulse' : ''} />
+              <span>{quickUploading ? L('Đang tải lên…', 'Uploading…') : t('Upload files')}</span>
             </button>
             <button
               type="button"
@@ -813,6 +839,7 @@ export default function CaseDetail() {
               <History size={13} />
               <span>{L('Nhật ký vụ án', 'Case Log')}</span>
             </button>
+            <NotificationBell />
             <button
               type="button"
               onClick={() => { logout(); navigate('/login') }}
@@ -1292,7 +1319,7 @@ export default function CaseDetail() {
 
           {/* Vùng hiển thị bảng dữ liệu chứng cứ */}
           <div className="flex-1 overflow-auto">
-            {loading || (srvMode && !srv && srvBusy) ? (
+            {(srvMode ? (!srv && srvBusy) : loading) ? (
               <div className="p-12 text-center text-xs text-slate-400">{t('Loading case data...')}</div>
             ) : filteredArtifacts.length === 0 ? (
               <div className="p-12 text-center text-slate-400 text-xs">
@@ -1585,10 +1612,10 @@ export default function CaseDetail() {
                   if (!window.confirm(L('Xoá tài liệu này khỏi vụ án?', 'Delete this file from case?'))) return
                   api
                     .deleteFile(name, fid)
-                    .then(() => loadData())
+                    .then(() => { loadData(); notify(L("Đã xoá tài liệu khỏi vụ án", "Deleted file from case")) })
                     .catch(() => {})
                 }}
-                className="ml-1 px-2 py-0.5 rounded bg-white text-red-600 border border-red-200 text-[11px] font-medium hover:bg-red-50 cursor-pointer"
+                className="ml-1 px-2 py-0.5 rounded bg-[#00b8ff]/10 text-[#38c8ff] border border-[#00b8ff]/40 text-[11px] font-medium hover:bg-[#00b8ff]/20 cursor-pointer"
               >
                 <Trash2 size={11} className="inline mr-0.5" /> {L("Xoá", "Delete")}
               </button>
@@ -1913,12 +1940,14 @@ export default function CaseDetail() {
         <UploadModal
           name={name}
           devices={devs?.items || []}
+          onSuccess={showToast}
           onClose={() => {
             setOpenUploadModal(false)
             loadData()
           }}
         />
       )}
+
 
       {openPackageModal && (
         <PackageModal name={name} onClose={() => setOpenPackageModal(false)} />
@@ -2016,18 +2045,36 @@ export default function CaseDetail() {
                 const list = auditItems.filter(a => !a.target || a.target === name || a.target.startsWith(`${name}/`) || a.target.includes(name))
                 if (auditBusy && !list.length) return <p className="py-8 text-center text-xs text-slate-400">{L('Đang tải nhật ký…', 'Loading log…')}</p>
                 if (!list.length) return <p className="py-8 text-center text-xs text-slate-400">{L('Chưa có nhật ký hoạt động nào cho vụ án này.', 'No activity recorded for this case.')}</p>
+                const actLabel = (a: string) => (isVi ? ({
+                  'case.create': 'Tạo vụ án',
+                  'case.rename': 'Đổi tên vụ án',
+                  'case.delete': 'Xoá vụ án',
+                  'device.create': 'Thêm thiết bị',
+                  'device.delete': 'Xoá thiết bị',
+                  'device.rename': 'Đổi tên thiết bị',
+                  'device.image': 'Đóng gói dữ liệu',
+                  'device.extract': 'Trích xuất',
+                  'pull.start': 'Thu thập ADB',
+                  'package.create': 'Đóng gói chứng cứ',
+                  'sync.queue': 'Xếp hàng đồng bộ',
+                  'sync.send': 'Đã gửi đồng bộ',
+                  'phone.connect': 'Cắm thiết bị',
+                  'phone.disconnect': 'Rút thiết bị',
+                  'file.delete': 'Xoá tệp',
+                }[a] ?? a) : a)
+                const detailLabel = (d: string) => (isVi ? ({ 'hdd': 'Thẻ nhớ / USB', 'phone': 'Điện thoại', 'usb': 'USB' }[d] ?? d) : d)
                 return (
                   <ul className="divide-y divide-slate-200 text-xs">
                     {list.map(a => (
                       <li key={a.id} className="flex items-start justify-between gap-3 py-2">
                         <div className="min-w-0 flex-1">
                           <span className="rounded bg-[#0077cc]/15 px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-[#0077cc] mr-2">
-                            {a.action}
+                            {actLabel(a.action)}
                           </span>
                           {a.target && <span className="font-medium text-slate-800">{a.target}</span>}
-                          {a.detail && <p className="mt-0.5 text-[11px] text-slate-500">{a.detail}</p>}
+                          {a.detail && <p className="mt-0.5 text-[11px] text-slate-500">{detailLabel(a.detail)}</p>}
                         </div>
-                        <span className="shrink-0 font-mono tabular-nums text-[11px] text-slate-400">{a.created_at}</span>
+                        <span className="shrink-0 font-mono tabular-nums text-[11px] text-slate-400">{a.created_at.replace('T', ' ')}</span>
                       </li>
                     ))}
                   </ul>
@@ -2473,10 +2520,12 @@ function CaseManagerDialog({
 function UploadModal({
   name,
   devices,
+  onSuccess,
   onClose,
 }: {
   name: string
   devices: Device[]
+  onSuccess?: (msg: string) => void
   onClose: () => void
 }) {
   const { lang, t } = useI18n()
@@ -2494,7 +2543,12 @@ function UploadModal({
     setErr('')
     try {
       const filesArr = Array.from(fileList)
-      await api.upload(filesArr, name, targetDevice || undefined)
+      const res = await api.upload(filesArr, name, targetDevice || undefined)
+      const cnt = res.saved || filesArr.length
+      onSuccess?.(L(
+        `Tải lên thành công ${cnt} tệp${targetDevice ? ` vào thiết bị "${targetDevice}"` : ''}`,
+        `Uploaded ${cnt} file(s)${targetDevice ? ` to "${targetDevice}"` : ''} successfully`,
+      ))
       onClose()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Tải lên thất bại')
